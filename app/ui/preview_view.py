@@ -1,4 +1,4 @@
-from PySide6.QtGui import QPixmap, QFont, QColor, QTransform, QFontDatabase, QImage, QPainter, QFontMetricsF
+from PySide6.QtGui import QPixmap, QFont, QColor, QTransform, QFontDatabase, QImage, QPainter, QFontMetricsF, QPen
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtWidgets import (
     QGraphicsScene,
@@ -6,8 +6,53 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsTextItem,
     QGraphicsItem,
+    QGraphicsDropShadowEffect,
 )
 import shiboken6
+
+
+class StrokedTextItem(QGraphicsTextItem):
+    """带描边效果的文本项"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.stroke_width = 0
+        self.stroke_color = QColor(255, 255, 255)
+    
+    def set_stroke(self, width, color):
+        """设置描边宽度和颜色"""
+        self.stroke_width = width
+        self.stroke_color = color
+        self.update()
+    
+    def paint(self, painter, option, widget=None):
+        """重写绘制方法以添加描边效果"""
+        if self.stroke_width > 0:
+            # 保存原始设置
+            original_pen = painter.pen()
+            
+            # 绘制描边
+            painter.setPen(QPen(self.stroke_color, self.stroke_width * 2))
+            painter.drawPath(self.textPath())
+            
+            # 绘制文本
+            painter.setPen(QPen(self.defaultTextColor(), 0))
+            painter.drawPath(self.textPath())
+            
+            # 恢复原始设置
+            painter.setPen(original_pen)
+        else:
+            # 没有描边时使用默认绘制
+            super().paint(painter, option, widget)
+    
+    def textPath(self):
+        """获取文本路径"""
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        font = self.font()
+        text = self.toPlainText()
+        path.addText(0, font.pointSize(), font, text)
+        return path
 
 
 class PreviewView(QGraphicsView):
@@ -84,29 +129,94 @@ class PreviewView(QGraphicsView):
         margin = int(self._wm_settings.get("margin", 20))
         position = self._wm_settings.get("position", "bottom_right")
         color = self._wm_settings.get("color")
+        
+        # 获取字体设置
+        font_family = self._wm_settings.get("font_family", "")
+        font_bold = self._wm_settings.get("font_bold", False)
+        font_italic = self._wm_settings.get("font_italic", False)
+        
+        # 获取阴影设置
+        shadow_enabled = self._wm_settings.get("shadow_enabled", False)
+        shadow_offset = int(self._wm_settings.get("shadow_offset", 2))
+        shadow_blur = int(self._wm_settings.get("shadow_blur", 5))
+        shadow_color = self._wm_settings.get("shadow_color", QColor(0, 0, 0))
+        
+        # 获取描边设置
+        stroke_enabled = self._wm_settings.get("stroke_enabled", False)
+        stroke_width = int(self._wm_settings.get("stroke_width", 2))
+        stroke_color = self._wm_settings.get("stroke_color", QColor(255, 255, 255))
 
-        if self._wm_item is None:
-            self._wm_item = QGraphicsTextItem()
-            self._wm_item.setDefaultTextColor(color if isinstance(color, QColor) else QColor(0, 0, 0))
-            self._wm_item.setOpacity(opacity)
-            self._wm_item.setZValue(1001)
-            # 仅水印可拖拽；视图默认保持 ScrollHandDrag，用事件切换
-            self._wm_item.setFlags(
-                QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-                | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-            )
-            self._wm_item.setAcceptHoverEvents(True)
-            self._scene.addItem(self._wm_item)
+        # 保存当前位置（如果存在）
+        current_pos = None
+        if self._wm_item is not None and shiboken6.isValid(self._wm_item):
+            current_pos = self._wm_item.pos()
+
+        # 根据是否需要描边效果选择不同的文本项类型
+        if stroke_enabled:
+            # 如果当前不是描边文本项或者不存在，创建新的描边文本项
+            if self._wm_item is None or not isinstance(self._wm_item, StrokedTextItem):
+                if self._wm_item is not None:
+                    self._scene.removeItem(self._wm_item)
+                self._wm_item = StrokedTextItem()
+                self._wm_item.setDefaultTextColor(color if isinstance(color, QColor) else QColor(0, 0, 0))
+                self._wm_item.setOpacity(opacity)
+                self._wm_item.setZValue(1001)
+                self._wm_item.setFlags(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                    | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                )
+                self._wm_item.setAcceptHoverEvents(True)
+                self._scene.addItem(self._wm_item)
+            
+            # 设置描边属性
+            self._wm_item.set_stroke(stroke_width, stroke_color)
+        else:
+            # 如果当前不是普通文本项或者不存在，创建新的普通文本项
+            if self._wm_item is None or isinstance(self._wm_item, StrokedTextItem):
+                if self._wm_item is not None:
+                    self._scene.removeItem(self._wm_item)
+                self._wm_item = QGraphicsTextItem()
+                self._wm_item.setDefaultTextColor(color if isinstance(color, QColor) else QColor(0, 0, 0))
+                self._wm_item.setOpacity(opacity)
+                self._wm_item.setZValue(1001)
+                self._wm_item.setFlags(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                    | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                )
+                self._wm_item.setAcceptHoverEvents(True)
+                self._scene.addItem(self._wm_item)
 
         self._wm_item.setPlainText(text)
-        # 使用系统通用字体，避免在部分 Windows 上触发 DirectWrite 错误（如 MS Sans Serif）
-        font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+        
+        # 设置字体
+        if font_family:
+            font = QFont(font_family)
+        else:
+            font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
         font.setPointSize(font_size)
+        font.setBold(font_bold)
+        font.setItalic(font_italic)
         self._wm_item.setFont(font)
         self._wm_item.setOpacity(opacity)
         if isinstance(color, QColor):
             self._wm_item.setDefaultTextColor(color)
 
+        # 设置阴影效果
+        if shadow_enabled:
+            shadow_effect = QGraphicsDropShadowEffect()
+            shadow_effect.setOffset(shadow_offset, shadow_offset)
+            shadow_effect.setBlurRadius(shadow_blur)
+            shadow_effect.setColor(shadow_color if isinstance(shadow_color, QColor) else QColor(0, 0, 0))
+            self._wm_item.setGraphicsEffect(shadow_effect)
+        else:
+            self._wm_item.setGraphicsEffect(None)
+
+        # 如果有保存的位置且是自定义位置，恢复位置
+        if current_pos is not None and position == "custom":
+            self._wm_item.setPos(current_pos)
+            return
+
+        # 否则按照位置设置计算新位置
         img_rect = self._scene.sceneRect()
         wm_rect = self._wm_item.boundingRect()
 
@@ -158,8 +268,6 @@ class PreviewView(QGraphicsView):
 
         # 设置文本位置
         self._wm_item.setPos(x, y)
-
-        # 无背景矩形，仅文本按选定颜色显示
 
     # ===== 缩放相关API =====
     def _apply_transform(self) -> None:

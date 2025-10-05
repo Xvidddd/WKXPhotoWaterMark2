@@ -21,7 +21,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("WKX Photo Watermark")
         self.resize(1000, 700)
-
+        
         # 左侧图片列表 + 右侧预览
         self.list_widget = QListWidget(self)
         self.list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
@@ -57,6 +57,11 @@ class MainWindow(QMainWindow):
 
         self._setup_actions()
         self._setup_connections()
+        
+        # 启动时自动加载上次会话
+        # 延迟调用，确保UI已完全初始化
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(100, self._load_last_session_on_start)
 
     def _setup_actions(self) -> None:
         open_action = QAction("导入图片...", self)
@@ -165,6 +170,16 @@ class MainWindow(QMainWindow):
             item = self.list_widget.takeItem(row)
             del item
 
+    def _load_last_session_on_start(self):
+        from app.services.templates import load_template
+        
+        # 尝试加载特定名称的模板
+        data = load_template("上次设置")
+        if data and hasattr(self, 'wm_panel') and hasattr(self, 'preview'):
+            # 应用到面板与预览
+            self.wm_panel.apply_settings(data)
+            self.preview.set_watermark_settings(data)
+    
     def _on_list_selection_changed(self) -> None:
         items = self.list_widget.selectedItems()
         if not items:
@@ -227,113 +242,94 @@ class MainWindow(QMainWindow):
 
 
     def closeEvent(self, event) -> None:
-        # 关闭时不再保存会话
+        # 关闭时保存到特定名称的模板
+        from app.services.templates import save_template
+        data = self._collect_current_settings()
+        # 使用固定名称"上次设置"作为特定模板名称
+        save_template("上次设置", data)
         super().closeEvent(event)
 
     def _on_save_template(self) -> None:
+        from app.services.templates import save_template
+        
         name, ok = QInputDialog.getText(self, "模板名称", "请输入模板名称：", text="默认模板")
         if not ok or not name.strip():
             return
             
-        # 打开文件保存对话框
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "保存模板文件",
-            str(Path.home() / f"{name.strip()}.json"),
-            "模板文件 (*.json)"
-        )
-        
-        if not file_path:  # 用户取消了选择
-            return
-            
         data = self._collect_current_settings()
         
-        # 确保文件有.json扩展名
-        if not file_path.lower().endswith('.json'):
-            file_path += '.json'
-            
-        # 直接保存到用户选择的位置
         try:
-            import json
-            from PySide6.QtGui import QColor
-            
-            # 手动处理QColor对象
-            save_data = dict(data)
-            if "color" in save_data and isinstance(save_data["color"], QColor):
-                save_data["color"] = save_data["color"].name()
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(save_data, f, ensure_ascii=False, indent=2)
-            QMessageBox.information(self, "已保存", f"模板已保存：\n{file_path}")
+            path = save_template(name.strip(), data)
+            QMessageBox.information(self, "已保存", f"模板已保存：\n{path}")
         except Exception as e:
             QMessageBox.warning(self, "保存失败", f"保存模板时出错：\n{str(e)}")
 
     def _on_load_template(self) -> None:
-        # 直接从文件加载
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "选择模板文件",
-            str(Path.home()),
-            "模板文件 (*.json)"
+        from app.services.templates import list_templates, load_template
+        
+        # 获取模板列表
+        templates = list_templates()
+        if not templates:
+            QMessageBox.information(self, "无模板", "没有找到可用的模板。请先保存一个模板。")
+            return
+            
+        # 显示模板选择对话框
+        name, ok = QInputDialog.getItem(
+            self, 
+            "选择模板", 
+            "请选择要加载的模板：", 
+            templates, 
+            0, 
+            False
         )
-        if not file_path:
+        
+        if not ok or not name:
             return
             
-        # 加载模板文件
-        try:
-            import json
-            from PySide6.QtGui import QColor
-            
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-            if not isinstance(data, dict):
-                QMessageBox.warning(self, "加载失败", "模板文件格式不正确。")
-                return
-            
-            # 处理QColor对象
-            if "color" in data and isinstance(data["color"], str):
-                data["color"] = QColor(data["color"])
-                
-            # 应用到面板与预览
-            self.wm_panel.apply_settings(data)
-            self.preview.set_watermark_settings(data)
-            QMessageBox.information(self, "已加载", f"模板已加载：\n{file_path}")
-        except Exception as e:
-            QMessageBox.warning(self, "加载失败", f"加载模板时出错：\n{str(e)}")
+        # 加载模板
+        data = load_template(name)
+        if not data:
+            QMessageBox.warning(self, "加载失败", f"无法加载模板：{name}")
             return
+            
+        # 应用到面板与预览
+        self.wm_panel.apply_settings(data)
+        self.preview.set_watermark_settings(data)
+        QMessageBox.information(self, "已加载", f"模板已加载：\n{name}")
 
     def _on_rename_template(self) -> None:
-        names = list_templates()
-        if not names:
-            QMessageBox.information(self, "无模板", "尚未保存任何模板。")
-            return
-        old, ok = QInputDialog.getItem(self, "重命名模板", "选择模板：", names, 0, False)
-        if not ok:
-            return
-        new, ok = QInputDialog.getText(self, "新的名称", "请输入新名称：", text=old)
-        if not ok or not new.strip():
-            return
-        if rename_template(old, new.strip()):
-            QMessageBox.information(self, "已重命名", f"模板已重命名为：{new.strip()}")
-        else:
-            QMessageBox.warning(self, "失败", "重命名失败（可能目标已存在）。")
+         from app.services.templates import list_templates, rename_template
+         names = list_templates()
+         if not names:
+             QMessageBox.information(self, "无模板", "尚未保存任何模板。")
+             return
+         old, ok = QInputDialog.getItem(self, "重命名模板", "选择模板：", names, 0, False)
+         if not ok:
+             return
+         new, ok = QInputDialog.getText(self, "新的名称", "请输入新名称：", text=old)
+         if not ok or not new.strip():
+             return
+         if rename_template(old, new.strip()):
+             QMessageBox.information(self, "已重命名", f"模板已重命名为：{new.strip()}")
+         else:
+             QMessageBox.warning(self, "失败", "重命名失败（可能目标已存在）。")
 
     def _on_delete_template(self) -> None:
-        names = list_templates()
-        if not names:
-            QMessageBox.information(self, "无模板", "尚未保存任何模板。")
-            return
-        name, ok = QInputDialog.getItem(self, "删除模板", "选择模板：", names, 0, False)
-        if not ok:
-            return
-        confirm = QMessageBox.question(self, "确认删除", f"确定删除模板“{name}”吗？")
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
-        if delete_template(name):
-            QMessageBox.information(self, "已删除", "模板已删除。")
-        else:
-            QMessageBox.warning(self, "失败", "删除失败。")
+         from app.services.templates import list_templates, delete_template
+         names = list_templates()
+         if not names:
+             QMessageBox.information(self, "无模板", "尚未保存任何模板。")
+             return
+         name, ok = QInputDialog.getItem(self, "删除模板", "选择模板：", names, 0, False)
+         if not ok:
+             return
+         confirm = QMessageBox.question(self, "确认删除", f"确定删除模板\"{name}\"吗？")
+         if confirm != QMessageBox.StandardButton.Yes:
+             return
+         if delete_template(name):
+             QMessageBox.information(self, "已删除", "模板已删除。")
+         else:
+             QMessageBox.warning(self, "失败", "删除失败。")
 
     # 支持将文件从资源管理器直接拖入列表
     def dragEnterEvent(self, event):

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from .preview_view import PreviewView
 from .watermark_panel import WatermarkPanel
+from .export_panel import ExportPanel
 
 
 class MainWindow(QMainWindow):
@@ -52,8 +53,17 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("水印设置", self)
         dock.setObjectName("DockWatermark")
         dock.setWidget(self.wm_panel)
+        
+        # 导出设置面板
+        self.export_panel = ExportPanel(self)
+        export_dock = QDockWidget("导出设置", self)
+        export_dock.setObjectName("DockExport")
+        export_dock.setWidget(self.export_panel)
         dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        
+        export_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, export_dock)
 
         self._setup_actions()
         self._setup_connections()
@@ -98,9 +108,10 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(exit_action)
 
-        # 视图菜单：提供重新显示水印面板的入口
+        # 视图菜单：提供重新显示面板的入口
         view_menu = self.menuBar().addMenu("视图")
         view_menu.addAction(self.findChild(QDockWidget, "DockWatermark").toggleViewAction())
+        view_menu.addAction(self.findChild(QDockWidget, "DockExport").toggleViewAction())
         # 缩放相关操作
         zoom_in_action = QAction("放大", self)
         # 兼容不同键盘布局：标准ZoomIn、Ctrl++、Ctrl+=
@@ -347,17 +358,9 @@ class MainWindow(QMainWindow):
         if not out_dir:
             return
 
-        # 选择导出格式（PNG 或 JPEG）
-        fmt, ok = QInputDialog.getItem(
-            self,
-            "选择导出格式",
-            "格式：",
-            ["PNG", "JPEG"],
-            0,
-            False,
-        )
-        if not ok:
-            return
+        # 获取导出设置
+        export_settings = self.export_panel.get_settings()
+        fmt = export_settings["format"]
         ext = ".png" if fmt == "PNG" else ".jpg"
 
         # 选择命名规则（保留原名/添加前缀/添加后缀）
@@ -394,6 +397,30 @@ class MainWindow(QMainWindow):
             if img is None:
                 fail_items.append(src_path.name)
                 continue
+                
+            # 应用尺寸调整
+            if export_settings["resize_mode"] != "none":
+                resize_mode = export_settings["resize_mode"]
+                resize_value = export_settings["resize_value"]
+                
+                # 获取原始尺寸
+                original_width = img.width()
+                original_height = img.height()
+                
+                if resize_mode == "width":
+                    new_width = resize_value
+                    new_height = int(original_height * (new_width / original_width))
+                    img = img.scaled(new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio)
+                elif resize_mode == "height":
+                    new_height = resize_value
+                    new_width = int(original_width * (new_height / original_height))
+                    img = img.scaled(new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio)
+                elif resize_mode == "percent":
+                    scale_factor = resize_value / 100.0
+                    new_width = int(original_width * scale_factor)
+                    new_height = int(original_height * scale_factor)
+                    img = img.scaled(new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio)
+                
             # 根据命名规则生成输出文件名
             stem = src_path.stem
             if mode == "prefix":
@@ -403,10 +430,19 @@ class MainWindow(QMainWindow):
             else:
                 new_name = f"{stem}{ext}"
             out_path = Path(out_dir) / new_name
-            if img.save(str(out_path), fmt):
-                ok_count += 1
+            
+            # 保存图片，应用JPEG质量设置
+            if fmt == "JPEG":
+                quality = export_settings["jpeg_quality"]
+                if img.save(str(out_path), fmt, quality):
+                    ok_count += 1
+                else:
+                    fail_items.append(src_path.name)
             else:
-                fail_items.append(src_path.name)
+                if img.save(str(out_path), fmt):
+                    ok_count += 1
+                else:
+                    fail_items.append(src_path.name)
 
         if fail_items:
             QMessageBox.warning(
@@ -467,13 +503,19 @@ class MainWindow(QMainWindow):
             if not ok:
                 return
 
-        # 默认使用 PNG 扩展名（保存对话框可改为 JPEG）
+        # 获取导出设置
+        export_settings = self.export_panel.get_settings()
+        fmt = export_settings["format"]
+        ext = ".png" if fmt == "PNG" else ".jpg"
+
+        # 默认使用设置中的扩展名
         if mode == "prefix":
-            default_name = f"{value}{src_path.stem}.png"
+            default_name = f"{value}{src_path.stem}{ext}"
         elif mode == "suffix":
-            default_name = f"{src_path.stem}{value}.png"
+            default_name = f"{src_path.stem}{value}{ext}"
         else:
-            default_name = f"{src_path.stem}.png"
+            default_name = f"{src_path.stem}{ext}"
+            
         save_path_str, sel_filter = QFileDialog.getSaveFileName(
             self,
             "导出图片",
@@ -487,8 +529,37 @@ class MainWindow(QMainWindow):
         fmt = "PNG"
         if save_path.suffix.lower() in {".jpg", ".jpeg"}:
             fmt = "JPEG"
+            
+        # 应用尺寸调整
+        if export_settings["resize_mode"] != "none":
+            resize_mode = export_settings["resize_mode"]
+            resize_value = export_settings["resize_value"]
+            
+            # 获取原始尺寸
+            original_width = composed.width()
+            original_height = composed.height()
+            
+            if resize_mode == "width":
+                new_width = resize_value
+                new_height = int(original_height * (new_width / original_width))
+                composed = composed.scaled(new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio)
+            elif resize_mode == "height":
+                new_height = resize_value
+                new_width = int(original_width * (new_height / original_height))
+                composed = composed.scaled(new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio)
+            elif resize_mode == "percent":
+                scale_factor = resize_value / 100.0
+                new_width = int(original_width * scale_factor)
+                new_height = int(original_height * scale_factor)
+                composed = composed.scaled(new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio)
 
-        ok = composed.save(str(save_path), fmt)
+        # 保存图片，应用JPEG质量设置
+        if fmt == "JPEG":
+            quality = export_settings["jpeg_quality"]
+            ok = composed.save(str(save_path), fmt, quality)
+        else:
+            ok = composed.save(str(save_path), fmt)
+            
         if ok:
             QMessageBox.information(self, "导出成功", f"已保存到：\n{save_path}")
         else:

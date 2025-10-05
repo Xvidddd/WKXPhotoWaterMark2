@@ -30,20 +30,39 @@ class StrokedTextItem(QGraphicsTextItem):
         if self.stroke_width > 0:
             # 保存原始设置
             original_pen = painter.pen()
+            original_brush = painter.brush()
             
-            # 绘制描边
-            painter.setPen(QPen(self.stroke_color, self.stroke_width * 2))
-            painter.drawPath(self.textPath())
+            # 获取文本路径
+            path = self.textPath()
             
-            # 绘制文本
-            painter.setPen(QPen(self.defaultTextColor(), 0))
-            painter.drawPath(self.textPath())
+            # 绘制描边 - 使用较粗的笔绘制路径轮廓
+            stroke_pen = QPen(self.stroke_color, self.stroke_width * 2)
+            stroke_pen.setJoinStyle(Qt.RoundJoin)
+            stroke_pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(stroke_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(path)
+            
+            # 绘制文本填充
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(self.defaultTextColor())
+            painter.drawPath(path)
             
             # 恢复原始设置
             painter.setPen(original_pen)
+            painter.setBrush(original_brush)
         else:
             # 没有描边时使用默认绘制
             super().paint(painter, option, widget)
+    
+    def boundingRect(self):
+        """重写边界矩形以包含描边"""
+        rect = super().boundingRect()
+        if self.stroke_width > 0:
+            # 为描边预留额外空间
+            extra = self.stroke_width
+            rect = rect.adjusted(-extra, -extra, extra, extra)
+        return rect
     
     def textPath(self):
         """获取文本路径"""
@@ -51,7 +70,10 @@ class StrokedTextItem(QGraphicsTextItem):
         path = QPainterPath()
         font = self.font()
         text = self.toPlainText()
-        path.addText(0, font.pointSize(), font, text)
+        # 使用QFontMetricsF获取更准确的基线位置
+        metrics = QFontMetricsF(font)
+        baseline_y = metrics.ascent()
+        path.addText(0, baseline_y, font, text)
         return path
 
 
@@ -151,8 +173,8 @@ class PreviewView(QGraphicsView):
         current_is_custom = False
         if self._wm_item is not None and shiboken6.isValid(self._wm_item):
             current_pos = self._wm_item.pos()
-            # 检查当前是否为自定义位置
-            current_is_custom = (position == "custom" or 
+            # 检查当前是否为自定义位置 - 检查设置中的实际状态
+            current_is_custom = (self._wm_settings.get("position") == "custom" or 
                                "pos_x_pct" in self._wm_settings or 
                                "pos_x" in self._wm_settings)
 
@@ -236,9 +258,9 @@ class PreviewView(QGraphicsView):
         # 为阴影和描边预留额外空间
         extra_margin = 0
         if shadow_enabled:
-            extra_margin = max(extra_margin, shadow_offset + shadow_blur)
+            extra_margin = max(extra_margin, shadow_offset + shadow_blur + 5)  # 额外增加5像素缓冲
         if stroke_enabled:
-            extra_margin = max(extra_margin, stroke_width)
+            extra_margin = max(extra_margin, stroke_width + 3)  # 额外增加3像素缓冲
 
         x = img_rect.left() + margin + extra_margin
         y = img_rect.top() + margin + extra_margin

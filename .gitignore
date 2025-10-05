@@ -38,3 +38,9 @@ tmp/
 
 # App specific
 templates/
+
+# Tests: ignore assistant-created test scripts and temp images
+scripts/test_export_effects.py
+scripts/test_export_font.py
+scripts/test_preserve_custom_position.py
+scripts/tmp_*

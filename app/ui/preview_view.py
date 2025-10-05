@@ -86,6 +86,9 @@ class PreviewView(QGraphicsView):
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self._image_item: QGraphicsPixmapItem | None = None
         self._wm_item: QGraphicsTextItem | None = None
+        # 图片水印项与当前拖拽项
+        self._wm_img_item: QGraphicsPixmapItem | None = None
+        self._drag_item: QGraphicsItem | None = None
         self._wm_settings: dict | None = None
         # 缩放相关状态
         self._zoom: float = 1.0
@@ -103,6 +106,7 @@ class PreviewView(QGraphicsView):
         self._scene.clear()
         # 清空场景后，之前的水印项会被删除，避免悬空引用
         self._wm_item = None
+        self._wm_img_item = None
         self._image_item = QGraphicsPixmapItem(pix)
         self._scene.addItem(self._image_item)
         self._scene.setSceneRect(pix.rect())
@@ -135,6 +139,12 @@ class PreviewView(QGraphicsView):
          merged = dict(prev)
          for k, v in settings.items():
              merged[k] = v
+         # 如果旧设置为 custom，且新设置未携带坐标，仅为了更新其他字段，则保留 custom，避免位置被重置
+         if prev.get("position") == "custom":
+             coord_keys = ["pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]
+             has_coords_in_new = any(k in settings for k in coord_keys)
+             if ("position" in settings) and not has_coords_in_new:
+                 merged["position"] = "custom"
          # 如果新设置未提供 position，则保留旧的 position
          if "position" not in settings and "position" in prev:
              merged["position"] = prev["position"]
@@ -154,14 +164,22 @@ class PreviewView(QGraphicsView):
         # 防御：如果场景清空导致旧对象已被销毁，但成员仍保留引用，重置为 None
         if self._wm_item is not None and not shiboken6.isValid(self._wm_item):
             self._wm_item = None
-        if not self._wm_settings or not self._wm_settings.get("text"):
-            # 无文本或设置，移除水印项
+        if self._wm_img_item is not None and not shiboken6.isValid(self._wm_img_item):
+            self._wm_img_item = None
+        if not self._wm_settings:
+            # 无设置，移除所有水印项
             if self._wm_item is not None:
                 self._scene.removeItem(self._wm_item)
                 self._wm_item = None
+            if self._wm_img_item is not None:
+                self._scene.removeItem(self._wm_img_item)
+                self._wm_img_item = None
             return
         if self._image_item is None:
             return
+
+        wm_type = self._wm_settings.get("wm_type", "text")
+        # 其余逻辑在后续代码中按类型分别处理
 
         text = self._wm_settings.get("text", "")
         font_size = int(self._wm_settings.get("font_size", 32))
@@ -193,141 +211,303 @@ class PreviewView(QGraphicsView):
         # 新建项标志：用于区分场景清空后新创建的水印项是否应直接使用旧位置
         just_created = False
 
-        # 创建或更新水印项
-        if self._wm_item is None:
-            if stroke_enabled:
-                self._wm_item = StrokedTextItem()
-                self._wm_item.set_stroke(stroke_width, stroke_color)
+        # 创建或更新水印项（文本分支保留，图片分支在后续处理）
+        if wm_type == "text":
+            if not text:
+                # 无文本则移除文本水印
+                if self._wm_item is not None:
+                    self._scene.removeItem(self._wm_item)
+                    self._wm_item = None
+                # 同时清理图片水印，避免残留
+                if self._wm_img_item is not None:
+                    self._scene.removeItem(self._wm_img_item)
+                    self._wm_img_item = None
+                return
+            if self._wm_item is None:
+                if stroke_enabled:
+                    self._wm_item = StrokedTextItem()
+                    self._wm_item.set_stroke(stroke_width, stroke_color)
+                else:
+                    self._wm_item = QGraphicsTextItem()
+                self._wm_item.setZValue(1001)
+                self._wm_item.setFlags(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                    | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                )
+                self._wm_item.setAcceptHoverEvents(True)
+                self._scene.addItem(self._wm_item)
+                just_created = True
+
+            self._wm_item.setPlainText(text)
+            # 设置字体
+            if font_family:
+                font = QFont(font_family)
             else:
-                self._wm_item = QGraphicsTextItem()
-            self._wm_item.setZValue(1001)
-            self._wm_item.setFlags(
-                QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-                | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-            )
-            self._wm_item.setAcceptHoverEvents(True)
-            self._scene.addItem(self._wm_item)
-            # 标记为刚创建，用于后续位置恢复逻辑
-            just_created = True
+                font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+            font.setPointSize(font_size)
+            font.setBold(font_bold)
+            font.setItalic(font_italic)
+            self._wm_item.setFont(font)
+            self._wm_item.setOpacity(opacity)
+            if isinstance(color, QColor):
+                self._wm_item.setDefaultTextColor(color)
 
-        self._wm_item.setPlainText(text)
-        
-        # 设置字体
-        if font_family:
-            font = QFont(font_family)
-        else:
-            font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
-        font.setPointSize(font_size)
-        font.setBold(font_bold)
-        font.setItalic(font_italic)
-        self._wm_item.setFont(font)
-        self._wm_item.setOpacity(opacity)
-        if isinstance(color, QColor):
-            self._wm_item.setDefaultTextColor(color)
-
-        # 设置阴影效果
-        if shadow_enabled:
-            shadow_effect = QGraphicsDropShadowEffect()
-            shadow_effect.setOffset(shadow_offset, shadow_offset)
-            shadow_effect.setBlurRadius(shadow_blur)
-            shadow_effect.setColor(shadow_color if isinstance(shadow_color, QColor) else QColor(0, 0, 0))
-            self._wm_item.setGraphicsEffect(shadow_effect)
-        else:
-            self._wm_item.setGraphicsEffect(None)
-
-        # 定义当前位置标志与当前位置
-        current_is_custom = (self._wm_settings.get("position") == "custom")
-        current_pos = self._wm_item.pos() if self._wm_item is not None else None
-
-        # 如果有保存的位置且是自定义位置，恢复位置
-        if current_is_custom:
-            # 如果有当前位置且不是刚创建（避免默认(0,0)误判），直接使用
-            if current_pos is not None and not just_created:
-                self._wm_item.setPos(current_pos)
-                # 更新设置中的位置信息
-                self._wm_settings["position"] = "custom"
-                self._wm_settings["pos_x"] = float(current_pos.x())
-                self._wm_settings["pos_y"] = float(current_pos.y())
-                # 计算百分比位置
-                img_rect = self._scene.sceneRect()
-                if img_rect.width() > 0 and img_rect.height() > 0:
-                    self._wm_settings["pos_x_pct"] = float((current_pos.x() - img_rect.left()) / img_rect.width())
-                    self._wm_settings["pos_y_pct"] = float((current_pos.y() - img_rect.top()) / img_rect.height())
-                return
-            # 如果没有当前位置但有保存的自定义位置，从设置中恢复
-            elif "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
-                img_rect = self._scene.sceneRect()
-                pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
-                pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
-                x = img_rect.left() + pct_x * img_rect.width()
-                y = img_rect.top() + pct_y * img_rect.height()
-                self._wm_item.setPos(x, y)
-                return
-            elif "pos_x" in self._wm_settings and "pos_y" in self._wm_settings:
-                x = float(self._wm_settings.get("pos_x", 0))
-                y = float(self._wm_settings.get("pos_y", 0))
-                self._wm_item.setPos(x, y)
-                return
-
-        # 否则按照位置设置计算新位置
-        img_rect = self._scene.sceneRect()
-        wm_rect = self._wm_item.boundingRect()
-
-        # 为阴影和描边预留额外空间
-        extra_margin = 0
-        if shadow_enabled:
-            extra_margin = max(extra_margin, shadow_offset + shadow_blur + 5)  # 额外增加5像素缓冲
-        if stroke_enabled:
-            extra_margin = max(extra_margin, stroke_width + 3)  # 额外增加3像素缓冲
-
-        x = img_rect.left() + margin + extra_margin
-        y = img_rect.top() + margin + extra_margin
-        if position == "top_left":
-            x = img_rect.left() + margin + extra_margin
-            y = img_rect.top() + margin + extra_margin
-        elif position == "top_right":
-            x = img_rect.right() - wm_rect.width() - margin - extra_margin
-            y = img_rect.top() + margin + extra_margin
-        elif position == "bottom_left":
-            x = img_rect.left() + margin + extra_margin
-            y = img_rect.bottom() - wm_rect.height() - margin - extra_margin
-        elif position == "bottom_right":
-            x = img_rect.right() - wm_rect.width() - margin - extra_margin
-            y = img_rect.bottom() - wm_rect.height() - margin - extra_margin
-        elif position == "center":
-            x = img_rect.center().x() - wm_rect.width() / 2
-            y = img_rect.center().y() - wm_rect.height() / 2
-        elif position == "top_center":
-            x = img_rect.center().x() - wm_rect.width() / 2
-            y = img_rect.top() + margin + extra_margin
-        elif position == "bottom_center":
-            x = img_rect.center().x() - wm_rect.width() / 2
-            y = img_rect.bottom() - wm_rect.height() - margin - extra_margin
-        elif position == "center_left":
-            x = img_rect.left() + margin + extra_margin
-            y = img_rect.center().y() - wm_rect.height() / 2
-        elif position == "center_right":
-            x = img_rect.right() - wm_rect.width() - margin - extra_margin
-            y = img_rect.center().y() - wm_rect.height() / 2
-        elif position == "custom":
-            # 使用用户拖拽记录的位置：优先按百分比映射，不存在时回退像素
-            if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
-                pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
-                pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
-                cx = img_rect.left() + pct_x * img_rect.width()
-                cy = img_rect.top() + pct_y * img_rect.height()
+            # 设置阴影效果
+            if shadow_enabled:
+                shadow_effect = QGraphicsDropShadowEffect()
+                shadow_effect.setOffset(shadow_offset, shadow_offset)
+                shadow_effect.setBlurRadius(shadow_blur)
+                shadow_effect.setColor(shadow_color if isinstance(shadow_color, QColor) else QColor(0, 0, 0))
+                self._wm_item.setGraphicsEffect(shadow_effect)
             else:
-                cx = float(self._wm_settings.get("pos_x", img_rect.left() + margin))
-                cy = float(self._wm_settings.get("pos_y", img_rect.top() + margin))
-            min_x = img_rect.left() + margin + extra_margin
-            min_y = img_rect.top() + margin + extra_margin
-            max_x = img_rect.right() - wm_rect.width() - margin - extra_margin
-            max_y = img_rect.bottom() - wm_rect.height() - margin - extra_margin
-            x = max(min_x, min(max_x, cx))
-            y = max(min_y, min(max_y, cy))
+                self._wm_item.setGraphicsEffect(None)
 
-        # 设置文本位置
-        self._wm_item.setPos(x, y)
+            # 位置计算（文本水印）：支持枚举与自定义坐标/百分比
+            img_rect = self._scene.sceneRect()
+            wm_rect = self._wm_item.boundingRect().toRect()
+            current_is_custom = (self._wm_settings.get("position") == "custom")
+            current_pos = self._wm_item.pos() if self._wm_item is not None else None
+
+            if current_is_custom:
+                # 自定义位置：优先保留已存在的位置；若为新创建或无现有位置，则根据坐标或百分比计算
+                if current_pos is not None and not just_created:
+                    self._wm_item.setPos(current_pos)
+                    # 更新设置中的位置信息
+                    self._wm_settings["position"] = "custom"
+                    self._wm_settings["pos_x"] = float(current_pos.x())
+                    self._wm_settings["pos_y"] = float(current_pos.y())
+                else:
+                    if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
+                        pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
+                        pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
+                        cx = img_rect.left() + pct_x * img_rect.width()
+                        cy = img_rect.top() + pct_y * img_rect.height()
+                    else:
+                        cx = float(self._wm_settings.get("pos_x", img_rect.left() + margin))
+                        cy = float(self._wm_settings.get("pos_y", img_rect.top() + margin))
+                    # 边界约束
+                    min_x = img_rect.left() + margin
+                    min_y = img_rect.top() + margin
+                    max_x = img_rect.right() - wm_rect.width() - margin
+                    max_y = img_rect.bottom() - wm_rect.height() - margin
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                    self._wm_item.setPos(x, y)
+                    # 写回设置，确保后续面板更新不会丢失
+                    self._wm_settings["pos_x"] = float(x)
+                    self._wm_settings["pos_y"] = float(y)
+                    self._wm_settings["position"] = "custom"
+            else:
+                # 枚举位置
+                x = img_rect.left() + margin
+                y = img_rect.top() + margin
+                if position == "top_left":
+                    x = img_rect.left() + margin
+                    y = img_rect.top() + margin
+                elif position == "top_right":
+                    x = img_rect.right() - wm_rect.width() - margin
+                    y = img_rect.top() + margin
+                elif position == "bottom_left":
+                    x = img_rect.left() + margin
+                    y = img_rect.bottom() - wm_rect.height() - margin
+                elif position == "bottom_right":
+                    x = img_rect.right() - wm_rect.width() - margin
+                    y = img_rect.bottom() - wm_rect.height() - margin
+                elif position == "center":
+                    x = img_rect.center().x() - wm_rect.width() / 2
+                    y = img_rect.center().y() - wm_rect.height() / 2
+                elif position == "top_center":
+                    x = img_rect.center().x() - wm_rect.width() / 2
+                    y = img_rect.top() + margin
+                elif position == "bottom_center":
+                    x = img_rect.center().x() - wm_rect.width() / 2
+                    y = img_rect.bottom() - wm_rect.height() - margin
+                elif position == "center_left":
+                    x = img_rect.left() + margin
+                    y = img_rect.center().y() - wm_rect.height() / 2
+                elif position == "center_right":
+                    x = img_rect.right() - wm_rect.width() - margin
+                    y = img_rect.center().y() - wm_rect.height() / 2
+                elif position == "custom":
+                    # 自定义但当前不是 custom（避免逻辑遗漏），按自定义坐标回退
+                    if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
+                        pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
+                        pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
+                        cx = img_rect.left() + pct_x * img_rect.width()
+                        cy = img_rect.top() + pct_y * img_rect.height()
+                    else:
+                        cx = float(self._wm_settings.get("pos_x", img_rect.left() + margin))
+                        cy = float(self._wm_settings.get("pos_y", img_rect.top() + margin))
+                    min_x = img_rect.left() + margin
+                    min_y = img_rect.top() + margin
+                    max_x = img_rect.right() - wm_rect.width() - margin
+                    max_y = img_rect.bottom() - wm_rect.height() - margin
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                self._wm_item.setPos(x, y)
+            # 图片水印项在文本模式下移除
+            if self._wm_img_item is not None:
+                self._scene.removeItem(self._wm_img_item)
+                self._wm_img_item = None
+        # 图片水印分支
+        else:
+            img_path = self._wm_settings.get("image_path", "")
+            if not img_path:
+                # 无图片路径，移除图片水印
+                if self._wm_img_item is not None:
+                    self._scene.removeItem(self._wm_img_item)
+                    self._wm_img_item = None
+                # 文本项也清理
+                if self._wm_item is not None:
+                    self._scene.removeItem(self._wm_item)
+                    self._wm_item = None
+                return
+            src_pix = QPixmap(img_path)
+            if src_pix.isNull():
+                # 无法加载图片，移除
+                if self._wm_img_item is not None:
+                    self._scene.removeItem(self._wm_img_item)
+                    self._wm_img_item = None
+                if self._wm_item is not None:
+                    self._scene.removeItem(self._wm_item)
+                    self._wm_item = None
+                return
+            # 读取图片透明度与缩放
+            img_opacity = float(self._wm_settings.get("img_opacity", 0.6))
+            scale_mode = self._wm_settings.get("img_scale_mode", "proportional")
+            if scale_mode not in {"proportional", "free"}:
+                scale_mode = "proportional"
+            if self._wm_img_item is None:
+                self._wm_img_item = QGraphicsPixmapItem()
+                self._wm_img_item.setZValue(1001)
+                self._wm_img_item.setFlags(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                    | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                )
+                self._wm_img_item.setAcceptHoverEvents(True)
+                self._scene.addItem(self._wm_img_item)
+                just_created = True
+            # 计算缩放后的像素图
+            if scale_mode == "proportional":
+                pct = int(self._wm_settings.get("img_scale_pct", 100))
+                pct = max(1, min(1000, pct))
+                new_w = max(1, int(src_pix.width() * pct / 100.0))
+                new_h = max(1, int(src_pix.height() * pct / 100.0))
+                wm_pix = src_pix.scaled(new_w, new_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.SmoothTransformation)
+            else:
+                target_w = int(self._wm_settings.get("img_width", src_pix.width()))
+                target_h = int(self._wm_settings.get("img_height", src_pix.height()))
+                target_w = max(1, target_w)
+                target_h = max(1, target_h)
+                wm_pix = src_pix.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.SmoothTransformation)
+            self._wm_img_item.setPixmap(wm_pix)
+            self._wm_img_item.setOpacity(img_opacity)
+            # 文本项在图片模式下移除
+            if self._wm_item is not None:
+                self._scene.removeItem(self._wm_item)
+                self._wm_item = None
+            # 恢复或计算位置
+            current_is_custom = (self._wm_settings.get("position") == "custom")
+            current_pos = self._wm_img_item.pos() if self._wm_img_item is not None else None
+            if current_is_custom:
+                if current_pos is not None and not just_created:
+                    self._wm_img_item.setPos(current_pos)
+                elif "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
+                    img_rect = self._scene.sceneRect()
+                    pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
+                    pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
+                    x = img_rect.left() + pct_x * img_rect.width()
+                    y = img_rect.top() + pct_y * img_rect.height()
+                    self._wm_img_item.setPos(x, y)
+                elif "pos_x" in self._wm_settings and "pos_y" in self._wm_settings:
+                    x = float(self._wm_settings.get("pos_x", 0))
+                    y = float(self._wm_settings.get("pos_y", 0))
+                    self._wm_img_item.setPos(x, y)
+            else:
+                img_rect = self._scene.sceneRect()
+                wm_rect = self._wm_img_item.boundingRect().toRect()
+                x = img_rect.left() + margin
+                y = img_rect.top() + margin
+                if position == "top_left":
+                    x = img_rect.left() + margin
+                    y = img_rect.top() + margin
+                elif position == "top_right":
+                    x = img_rect.right() - wm_rect.width() - margin
+                    y = img_rect.top() + margin
+                elif position == "bottom_left":
+                    x = img_rect.left() + margin
+                    y = img_rect.bottom() - wm_rect.height() - margin
+                elif position == "bottom_right":
+                    x = img_rect.right() - wm_rect.width() - margin
+                    y = img_rect.bottom() - wm_rect.height() - margin
+                elif position == "center":
+                    x = img_rect.center().x() - wm_rect.width() / 2
+                    y = img_rect.center().y() - wm_rect.height() / 2
+                elif position == "top_center":
+                    x = img_rect.center().x() - wm_rect.width() / 2
+                    y = img_rect.top() + margin
+                elif position == "bottom_center":
+                    x = img_rect.center().x() - wm_rect.width() / 2
+                    y = img_rect.bottom() - wm_rect.height() - margin
+                elif position == "center_left":
+                    x = img_rect.left() + margin
+                    y = img_rect.center().y() - wm_rect.height() / 2
+                elif position == "center_right":
+                    x = img_rect.right() - wm_rect.width() - margin
+                    y = img_rect.center().y() - wm_rect.height() / 2
+                elif position == "custom":
+                    # 使用用户拖拽记录的位置：优先按百分比映射，不存在时回退像素
+                    if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
+                        pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
+                        pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
+                        cx = img_rect.left() + pct_x * img_rect.width()
+                        cy = img_rect.top() + pct_y * img_rect.height()
+                    else:
+                        cx = float(self._wm_settings.get("pos_x", img_rect.left() + margin))
+                        cy = float(self._wm_settings.get("pos_y", img_rect.top() + margin))
+                    min_x = img_rect.left() + margin
+                    min_y = img_rect.top() + margin
+                    max_x = img_rect.right() - wm_rect.width() - margin
+                    max_y = img_rect.bottom() - wm_rect.height() - margin
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                self._wm_img_item.setPos(x, y)
+
+    def mousePressEvent(self, event):
+        item = self.itemAt(event.pos())
+        # 如果点中任一水印，则临时关闭视图拖拽，交由水印自身拖拽
+        if item is not None and (
+            (self._wm_item is not None and item is self._wm_item) or
+            (self._wm_img_item is not None and item is self._wm_img_item)
+        ):
+            self._dragging_wm = True
+            self._drag_item = item
+            self.setDragMode(QGraphicsView.NoDrag)
+        else:
+            self._dragging_wm = False
+            self._drag_item = None
+            self.setDragMode(QGraphicsView.ScrollHandDrag)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if self._dragging_wm and self._drag_item is not None and shiboken6.isValid(self._drag_item):
+            pos = self._drag_item.pos()
+            # 将当前位置写入设置为自定义，便于导出一致
+            if self._wm_settings is None:
+                self._wm_settings = {}
+            self._wm_settings["position"] = "custom"
+            self._wm_settings["pos_x"] = float(pos.x())
+            self._wm_settings["pos_y"] = float(pos.y())
+            # 同时记录相对百分比，便于跨不同尺寸图片保持相对位置
+            rect = self._scene.sceneRect()
+            if rect.width() > 0 and rect.height() > 0:
+                self._wm_settings["pos_x_pct"] = float((pos.x() - rect.left()) / rect.width())
+                self._wm_settings["pos_y_pct"] = float((pos.y() - rect.top()) / rect.height())
+        # 释放后恢复视图拖拽模式
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self._dragging_wm = False
+        self._drag_item = None
 
     # ===== 缩放相关API =====
     def _apply_transform(self) -> None:
@@ -371,37 +551,6 @@ class PreviewView(QGraphicsView):
         else:
             super().wheelEvent(event)
 
-    # ===== 鼠标事件：仅点击水印时允许拖拽水印，其他保持图片平移 =====
-    def mousePressEvent(self, event):
-        item = self.itemAt(event.pos())
-        # 如果点中水印，则临时关闭视图拖拽，交由水印自身拖拽
-        if item is not None and self._wm_item is not None and item is self._wm_item:
-            self._dragging_wm = True
-            self.setDragMode(QGraphicsView.NoDrag)
-        else:
-            self._dragging_wm = False
-            self.setDragMode(QGraphicsView.ScrollHandDrag)
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        if self._dragging_wm and self._wm_item is not None and shiboken6.isValid(self._wm_item):
-            pos = self._wm_item.pos()
-            # 将当前位置写入设置为自定义，便于导出一致
-            if self._wm_settings is None:
-                self._wm_settings = {}
-            self._wm_settings["position"] = "custom"
-            self._wm_settings["pos_x"] = float(pos.x())
-            self._wm_settings["pos_y"] = float(pos.y())
-            # 同时记录相对百分比，便于跨不同尺寸图片保持相对位置
-            rect = self._scene.sceneRect()
-            if rect.width() > 0 and rect.height() > 0:
-                self._wm_settings["pos_x_pct"] = float((pos.x() - rect.left()) / rect.width())
-                self._wm_settings["pos_y_pct"] = float((pos.y() - rect.top()) / rect.height())
-        # 释放后恢复视图拖拽模式
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self._dragging_wm = False
-
     # ===== 导出合成 =====
     def compose_qimage(self):
         if self._image_item is None or not self._wm_settings:
@@ -411,6 +560,82 @@ class PreviewView(QGraphicsView):
             return None
         img: QImage = pix.toImage().convertToFormat(QImage.Format_ARGB32)
 
+        wm_type = self._wm_settings.get("wm_type", "text")
+        if wm_type == "image":
+            # 图片水印合成
+            img_path = self._wm_settings.get("image_path", "")
+            if not img_path:
+                return img
+            wm_img = QImage(img_path)
+            if wm_img.isNull():
+                return img
+            opacity = float(self._wm_settings.get("img_opacity", 0.6))
+            margin = int(self._wm_settings.get("margin", 20))
+            scale_mode = self._wm_settings.get("img_scale_mode", "proportional")
+            if scale_mode == "proportional":
+                pct = int(self._wm_settings.get("img_scale_pct", 100))
+                target_w = max(1, int(wm_img.width() * pct / 100.0))
+                target_h = max(1, int(wm_img.height() * pct / 100.0))
+                wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            else:
+                target_w = max(1, int(self._wm_settings.get("img_width", wm_img.width())))
+                target_h = max(1, int(self._wm_settings.get("img_height", wm_img.height())))
+                wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+            painter = QPainter(img)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setOpacity(opacity)
+            wm_w = wm_scaled.width()
+            wm_h = wm_scaled.height()
+            position = self._wm_settings.get("position", "bottom_right")
+            if position == "custom":
+                if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
+                    cx = float(self._wm_settings.get("pos_x_pct", 0.0)) * img.width()
+                    cy = float(self._wm_settings.get("pos_y_pct", 0.0)) * img.height()
+                else:
+                    cx = float(self._wm_settings.get("pos_x", margin))
+                    cy = float(self._wm_settings.get("pos_y", margin))
+                min_x = margin
+                min_y = margin
+                max_x = img.width() - margin - wm_w
+                max_y = img.height() - margin - wm_h
+                x = max(min_x, min(max_x, cx))
+                y = max(min_y, min(max_y, cy))
+                painter.drawImage(int(x), int(y), wm_scaled)
+            else:
+                content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
+                if position == "top_left":
+                    x = content_rect.left()
+                    y = content_rect.top()
+                elif position == "top_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.top()
+                elif position == "bottom_left":
+                    x = content_rect.left()
+                    y = content_rect.bottom() - wm_h
+                elif position == "bottom_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.bottom() - wm_h
+                elif position == "top_center":
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.top()
+                elif position == "bottom_center":
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.bottom() - wm_h
+                elif position == "center_left":
+                    x = content_rect.left()
+                    y = content_rect.center().y() - wm_h // 2
+                elif position == "center_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.center().y() - wm_h // 2
+                else:  # center
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.center().y() - wm_h // 2
+                painter.drawImage(int(x), int(y), wm_scaled)
+            painter.end()
+            return img
+
+        # 文本水印合成（保留原逻辑）
         text = self._wm_settings.get("text", "")
         if not text:
             return img
@@ -421,8 +646,7 @@ class PreviewView(QGraphicsView):
         color = self._wm_settings.get("color", QColor(0, 0, 0))
         if not isinstance(color, QColor):
             color = QColor(0, 0, 0)
-    
-        # 读取阴影与描边配置
+
         shadow_enabled = bool(self._wm_settings.get("shadow_enabled", False))
         shadow_offset = int(self._wm_settings.get("shadow_offset", 2))
         shadow_blur = int(self._wm_settings.get("shadow_blur", 5))
@@ -435,7 +659,6 @@ class PreviewView(QGraphicsView):
         if not isinstance(stroke_color, QColor):
             stroke_color = QColor(255, 255, 255)
 
-        # 构造字体（应用用户选择的字体族与样式）
         font_family = self._wm_settings.get("font_family", "")
         font_bold = bool(self._wm_settings.get("font_bold", False))
         font_italic = bool(self._wm_settings.get("font_italic", False))
@@ -446,8 +669,7 @@ class PreviewView(QGraphicsView):
         font.setPointSize(font_size)
         font.setBold(font_bold)
         font.setItalic(font_italic)
-    
-        # 用场景渲染文本（包含阴影与描边），生成透明文本图层
+
         text_scene = QGraphicsScene()
         if stroke_enabled:
             text_item = StrokedTextItem()
@@ -465,18 +687,15 @@ class PreviewView(QGraphicsView):
             eff.setColor(shadow_color)
             text_item.setGraphicsEffect(eff)
         text_scene.addItem(text_item)
-        # 计算文本场景的包围矩形（包含阴影扩展）
         text_rect = text_scene.itemsBoundingRect()
         text_scene.setSceneRect(text_rect)
         text_img = QImage(int(text_rect.width()), int(text_rect.height()), QImage.Format_ARGB32)
         text_img.fill(QColor(0, 0, 0, 0))
         painter_layer = QPainter(text_img)
-        # 将文本项移动使其从(0,0)开始渲染
         text_item.setPos(text_item.pos() - text_rect.topLeft())
         text_scene.render(painter_layer)
         painter_layer.end()
 
-        # 位置计算：支持枚举位置与自定义坐标（使用文本图层尺寸）
         painter = QPainter(img)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -484,14 +703,12 @@ class PreviewView(QGraphicsView):
         text_w = text_img.width()
         text_h = text_img.height()
         if position == "custom":
-            # 优先使用百分比映射位置；回退到像素坐标
             if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
                 cx = float(self._wm_settings.get("pos_x_pct", 0.0)) * img.width()
                 cy = float(self._wm_settings.get("pos_y_pct", 0.0)) * img.height()
             else:
                 cx = float(self._wm_settings.get("pos_x", margin))
                 cy = float(self._wm_settings.get("pos_y", margin))
-            # 夹紧范围到内容区域（避免文字溢出右下边界）
             min_x = margin
             min_y = margin
             max_x = img.width() - margin - text_w
@@ -500,7 +717,6 @@ class PreviewView(QGraphicsView):
             y = max(min_y, min(max_y, cy))
             painter.drawImage(int(x), int(y), text_img)
         else:
-            # 使用内容区域 + 对齐绘制
             content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
             if position == "top_left":
                 x = content_rect.left()
@@ -533,6 +749,7 @@ class PreviewView(QGraphicsView):
         painter.end()
         return img
 
+
     def compose_qimage_for_path(self, path: str, settings: dict | None = None):
         # 离屏合成：直接从文件读取为 QImage 并绘制水印
         if not path:
@@ -543,6 +760,81 @@ class PreviewView(QGraphicsView):
         img = img.convertToFormat(QImage.Format_ARGB32)
 
         wm = settings or self._wm_settings or {}
+        wm_type = wm.get("wm_type", "text")
+        if wm_type == "image":
+            # 图片水印导出
+            img_path = wm.get("image_path", "")
+            if not img_path:
+                return img
+            wm_img = QImage(img_path)
+            if wm_img.isNull():
+                return img
+            opacity = float(wm.get("img_opacity", 0.6))
+            margin = int(wm.get("margin", 20))
+            scale_mode = wm.get("img_scale_mode", "proportional")
+            if scale_mode == "proportional":
+                pct = int(wm.get("img_scale_pct", 100))
+                target_w = max(1, int(wm_img.width() * pct / 100.0))
+                target_h = max(1, int(wm_img.height() * pct / 100.0))
+                wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            else:
+                target_w = max(1, int(wm.get("img_width", wm_img.width())))
+                target_h = max(1, int(wm.get("img_height", wm_img.height())))
+                wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+            painter = QPainter(img)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setOpacity(opacity)
+            wm_w = wm_scaled.width()
+            wm_h = wm_scaled.height()
+            position = wm.get("position", "bottom_right")
+            if position == "custom":
+                if "pos_x_pct" in wm and "pos_y_pct" in wm:
+                    cx = float(wm.get("pos_x_pct", 0.0)) * img.width()
+                    cy = float(wm.get("pos_y_pct", 0.0)) * img.height()
+                else:
+                    cx = float(wm.get("pos_x", margin))
+                    cy = float(wm.get("pos_y", margin))
+                min_x = margin
+                min_y = margin
+                max_x = img.width() - margin - wm_w
+                max_y = img.height() - margin - wm_h
+                x = max(min_x, min(max_x, cx))
+                y = max(min_y, min(max_y, cy))
+                painter.drawImage(int(x), int(y), wm_scaled)
+            else:
+                content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
+                if position == "top_left":
+                    x = content_rect.left()
+                    y = content_rect.top()
+                elif position == "top_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.top()
+                elif position == "bottom_left":
+                    x = content_rect.left()
+                    y = content_rect.bottom() - wm_h
+                elif position == "bottom_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.bottom() - wm_h
+                elif position == "top_center":
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.top()
+                elif position == "bottom_center":
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.bottom() - wm_h
+                elif position == "center_left":
+                    x = content_rect.left()
+                    y = content_rect.center().y() - wm_h // 2
+                elif position == "center_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.center().y() - wm_h // 2
+                else:
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.center().y() - wm_h // 2
+                painter.drawImage(int(x), int(y), wm_scaled)
+            painter.end()
+            return img
+
         text = wm.get("text", "")
         if not text:
             return img

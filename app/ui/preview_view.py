@@ -146,11 +146,19 @@ class PreviewView(QGraphicsView):
         stroke_width = int(self._wm_settings.get("stroke_width", 2))
         stroke_color = self._wm_settings.get("stroke_color", QColor(255, 255, 255))
 
-        # 保存当前位置（如果存在）
+        # 保存当前位置（如果存在且有效）
         current_pos = None
+        current_is_custom = False
         if self._wm_item is not None and shiboken6.isValid(self._wm_item):
             current_pos = self._wm_item.pos()
+            # 检查当前是否为自定义位置
+            current_is_custom = (position == "custom" or 
+                               "pos_x_pct" in self._wm_settings or 
+                               "pos_x" in self._wm_settings)
 
+        # 记录是否需要重新创建文本项
+        need_recreate = False
+        
         # 根据是否需要描边效果选择不同的文本项类型
         if stroke_enabled:
             # 如果当前不是描边文本项或者不存在，创建新的描边文本项
@@ -158,15 +166,7 @@ class PreviewView(QGraphicsView):
                 if self._wm_item is not None:
                     self._scene.removeItem(self._wm_item)
                 self._wm_item = StrokedTextItem()
-                self._wm_item.setDefaultTextColor(color if isinstance(color, QColor) else QColor(0, 0, 0))
-                self._wm_item.setOpacity(opacity)
-                self._wm_item.setZValue(1001)
-                self._wm_item.setFlags(
-                    QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-                    | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-                )
-                self._wm_item.setAcceptHoverEvents(True)
-                self._scene.addItem(self._wm_item)
+                need_recreate = True
             
             # 设置描边属性
             self._wm_item.set_stroke(stroke_width, stroke_color)
@@ -176,15 +176,19 @@ class PreviewView(QGraphicsView):
                 if self._wm_item is not None:
                     self._scene.removeItem(self._wm_item)
                 self._wm_item = QGraphicsTextItem()
-                self._wm_item.setDefaultTextColor(color if isinstance(color, QColor) else QColor(0, 0, 0))
-                self._wm_item.setOpacity(opacity)
-                self._wm_item.setZValue(1001)
-                self._wm_item.setFlags(
-                    QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-                    | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-                )
-                self._wm_item.setAcceptHoverEvents(True)
-                self._scene.addItem(self._wm_item)
+                need_recreate = True
+
+        # 如果重新创建了文本项，设置基本属性
+        if need_recreate:
+            self._wm_item.setDefaultTextColor(color if isinstance(color, QColor) else QColor(0, 0, 0))
+            self._wm_item.setOpacity(opacity)
+            self._wm_item.setZValue(1001)
+            self._wm_item.setFlags(
+                QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            )
+            self._wm_item.setAcceptHoverEvents(True)
+            self._scene.addItem(self._wm_item)
 
         self._wm_item.setPlainText(text)
         
@@ -212,42 +216,58 @@ class PreviewView(QGraphicsView):
             self._wm_item.setGraphicsEffect(None)
 
         # 如果有保存的位置且是自定义位置，恢复位置
-        if current_pos is not None and position == "custom":
+        if current_pos is not None and current_is_custom:
             self._wm_item.setPos(current_pos)
+            # 更新设置中的位置信息
+            self._wm_settings["position"] = "custom"
+            self._wm_settings["pos_x"] = float(current_pos.x())
+            self._wm_settings["pos_y"] = float(current_pos.y())
+            # 计算百分比位置
+            img_rect = self._scene.sceneRect()
+            if img_rect.width() > 0 and img_rect.height() > 0:
+                self._wm_settings["pos_x_pct"] = float((current_pos.x() - img_rect.left()) / img_rect.width())
+                self._wm_settings["pos_y_pct"] = float((current_pos.y() - img_rect.top()) / img_rect.height())
             return
 
         # 否则按照位置设置计算新位置
         img_rect = self._scene.sceneRect()
         wm_rect = self._wm_item.boundingRect()
+        
+        # 为阴影和描边预留额外空间
+        extra_margin = 0
+        if shadow_enabled:
+            extra_margin = max(extra_margin, shadow_offset + shadow_blur)
+        if stroke_enabled:
+            extra_margin = max(extra_margin, stroke_width)
 
-        x = img_rect.left() + margin
-        y = img_rect.top() + margin
+        x = img_rect.left() + margin + extra_margin
+        y = img_rect.top() + margin + extra_margin
         if position == "top_left":
-            x = img_rect.left() + margin
-            y = img_rect.top() + margin
+            x = img_rect.left() + margin + extra_margin
+            y = img_rect.top() + margin + extra_margin
         elif position == "top_right":
-            x = img_rect.right() - wm_rect.width() - margin
-            y = img_rect.top() + margin
+            x = img_rect.right() - wm_rect.width() - margin - extra_margin
+            y = img_rect.top() + margin + extra_margin
         elif position == "bottom_left":
-            x = img_rect.left() + margin
-            y = img_rect.bottom() - wm_rect.height() - margin
+            x = img_rect.left() + margin + extra_margin
+            y = img_rect.bottom() - wm_rect.height() - margin - extra_margin
         elif position == "bottom_right":
-            x = img_rect.right() - wm_rect.width() - margin
-            y = img_rect.bottom() - wm_rect.height() - margin
+            x = img_rect.right() - wm_rect.width() - margin - extra_margin
+            y = img_rect.bottom() - wm_rect.height() - margin - extra_margin
         elif position == "center":
             x = img_rect.center().x() - wm_rect.width() / 2
             y = img_rect.center().y() - wm_rect.height() / 2
         elif position == "top_center":
             x = img_rect.center().x() - wm_rect.width() / 2
-            y = img_rect.top() + margin
+            y = img_rect.top() + margin + extra_margin
         elif position == "bottom_center":
             x = img_rect.center().x() - wm_rect.width() / 2
-            y = img_rect.bottom() - wm_rect.height() - margin
+            y = img_rect.bottom() - wm_rect.height() - margin - extra_margin
         elif position == "center_left":
-            x = img_rect.left() + margin
+            x = img_rect.left() + margin + extra_margin
             y = img_rect.center().y() - wm_rect.height() / 2
         elif position == "center_right":
-            x = img_rect.right() - wm_rect.width() - margin
+            x = img_rect.right() - wm_rect.width() - margin - extra_margin
             y = img_rect.center().y() - wm_rect.height() / 2
         elif position == "custom":
             # 使用用户拖拽记录的位置：优先按百分比映射，不存在时回退像素
@@ -259,10 +279,10 @@ class PreviewView(QGraphicsView):
             else:
                 cx = float(self._wm_settings.get("pos_x", img_rect.left() + margin))
                 cy = float(self._wm_settings.get("pos_y", img_rect.top() + margin))
-            min_x = img_rect.left() + margin
-            min_y = img_rect.top() + margin
-            max_x = img_rect.right() - wm_rect.width() - margin
-            max_y = img_rect.bottom() - wm_rect.height() - margin
+            min_x = img_rect.left() + margin + extra_margin
+            min_y = img_rect.top() + margin + extra_margin
+            max_x = img_rect.right() - wm_rect.width() - margin - extra_margin
+            max_y = img_rect.bottom() - wm_rect.height() - margin - extra_margin
             x = max(min_x, min(max_x, cx))
             y = max(min_y, min(max_y, cy))
 

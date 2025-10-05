@@ -171,12 +171,18 @@ class PreviewView(QGraphicsView):
         # 保存当前位置（如果存在且有效）
         current_pos = None
         current_is_custom = False
+        
+        # 首先检查设置中是否已经有自定义位置信息
+        has_custom_position = (self._wm_settings.get("position") == "custom" or 
+                              "pos_x_pct" in self._wm_settings or 
+                              "pos_x" in self._wm_settings)
+        
         if self._wm_item is not None and shiboken6.isValid(self._wm_item):
             current_pos = self._wm_item.pos()
-            # 检查当前是否为自定义位置 - 检查设置中的实际状态
-            current_is_custom = (self._wm_settings.get("position") == "custom" or 
-                               "pos_x_pct" in self._wm_settings or 
-                               "pos_x" in self._wm_settings)
+            current_is_custom = has_custom_position
+        elif has_custom_position:
+            # 即使当前没有有效的水印项，但设置中有自定义位置，也应该恢复
+            current_is_custom = True
 
         # 记录是否需要重新创建文本项
         need_recreate = False
@@ -238,18 +244,34 @@ class PreviewView(QGraphicsView):
             self._wm_item.setGraphicsEffect(None)
 
         # 如果有保存的位置且是自定义位置，恢复位置
-        if current_pos is not None and current_is_custom:
-            self._wm_item.setPos(current_pos)
-            # 更新设置中的位置信息
-            self._wm_settings["position"] = "custom"
-            self._wm_settings["pos_x"] = float(current_pos.x())
-            self._wm_settings["pos_y"] = float(current_pos.y())
-            # 计算百分比位置
-            img_rect = self._scene.sceneRect()
-            if img_rect.width() > 0 and img_rect.height() > 0:
-                self._wm_settings["pos_x_pct"] = float((current_pos.x() - img_rect.left()) / img_rect.width())
-                self._wm_settings["pos_y_pct"] = float((current_pos.y() - img_rect.top()) / img_rect.height())
-            return
+        if current_is_custom:
+            # 如果有当前位置，直接使用
+            if current_pos is not None:
+                self._wm_item.setPos(current_pos)
+                # 更新设置中的位置信息
+                self._wm_settings["position"] = "custom"
+                self._wm_settings["pos_x"] = float(current_pos.x())
+                self._wm_settings["pos_y"] = float(current_pos.y())
+                # 计算百分比位置
+                img_rect = self._scene.sceneRect()
+                if img_rect.width() > 0 and img_rect.height() > 0:
+                    self._wm_settings["pos_x_pct"] = float((current_pos.x() - img_rect.left()) / img_rect.width())
+                    self._wm_settings["pos_y_pct"] = float((current_pos.y() - img_rect.top()) / img_rect.height())
+                return
+            # 如果没有当前位置但有保存的自定义位置，从设置中恢复
+            elif "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
+                img_rect = self._scene.sceneRect()
+                pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
+                pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
+                x = img_rect.left() + pct_x * img_rect.width()
+                y = img_rect.top() + pct_y * img_rect.height()
+                self._wm_item.setPos(x, y)
+                return
+            elif "pos_x" in self._wm_settings and "pos_y" in self._wm_settings:
+                x = float(self._wm_settings.get("pos_x", 0))
+                y = float(self._wm_settings.get("pos_y", 0))
+                self._wm_item.setPos(x, y)
+                return
 
         # 否则按照位置设置计算新位置
         img_rect = self._scene.sceneRect()

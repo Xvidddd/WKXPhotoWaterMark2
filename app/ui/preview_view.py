@@ -129,23 +129,24 @@ class PreviewView(QGraphicsView):
                 self._apply_transform()
 
     def set_watermark_settings(self, settings: dict) -> None:
-        # 保存当前的自定义位置信息（如果存在）
-        custom_position_data = {}
-        if self._wm_settings and self._wm_settings.get("position") == "custom":
-            # 保存所有自定义位置相关的数据
-            for key in ["position", "pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]:
-                if key in self._wm_settings:
-                    custom_position_data[key] = self._wm_settings[key]
-        
-        # 更新设置
-        self._wm_settings = settings
-        
-        # 如果有保存的自定义位置数据，且新设置中没有指定位置为custom，则恢复自定义位置
-        if custom_position_data and settings.get("position") != "custom":
-            # 恢复自定义位置数据
-            self._wm_settings.update(custom_position_data)
-        
-        self._apply_watermark()
+         # 保存当前的自定义位置信息（如果存在）
+         custom_position_data = {}
+         if self._wm_settings and self._wm_settings.get("position") == "custom":
+             # 保存所有自定义位置相关的数据
+             for key in ["pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]:
+                 if key in self._wm_settings:
+                     custom_position_data[key] = self._wm_settings[key]
+         
+         # 更新设置
+         self._wm_settings = settings
+         
+         # 仅当新设置明确为 custom，且未提供坐标时，才恢复之前的自定义坐标
+         if self._wm_settings.get("position") == "custom" and custom_position_data:
+             for key in ["pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]:
+                 if key not in self._wm_settings and key in custom_position_data:
+                     self._wm_settings[key] = custom_position_data[key]
+         
+         self._apply_watermark()
 
     def _apply_watermark(self) -> None:
         # 防御：如果场景清空导致旧对象已被销毁，但成员仍保留引用，重置为 None
@@ -165,66 +166,38 @@ class PreviewView(QGraphicsView):
         opacity = float(self._wm_settings.get("opacity", 0.6))
         margin = int(self._wm_settings.get("margin", 20))
         position = self._wm_settings.get("position", "bottom_right")
-        color = self._wm_settings.get("color")
-        
-        # 获取字体设置
-        font_family = self._wm_settings.get("font_family", "")
-        font_bold = self._wm_settings.get("font_bold", False)
-        font_italic = self._wm_settings.get("font_italic", False)
-        
-        # 获取阴影设置
-        shadow_enabled = self._wm_settings.get("shadow_enabled", False)
+        color = self._wm_settings.get("color", QColor(0, 0, 0))
+        if not isinstance(color, QColor):
+            color = QColor(0, 0, 0)
+    
+        # 读取阴影与描边配置
+        shadow_enabled = bool(self._wm_settings.get("shadow_enabled", False))
         shadow_offset = int(self._wm_settings.get("shadow_offset", 2))
         shadow_blur = int(self._wm_settings.get("shadow_blur", 5))
         shadow_color = self._wm_settings.get("shadow_color", QColor(0, 0, 0))
-        
-        # 获取描边设置
-        stroke_enabled = self._wm_settings.get("stroke_enabled", False)
+        if not isinstance(shadow_color, QColor):
+            shadow_color = QColor(0, 0, 0)
+        stroke_enabled = bool(self._wm_settings.get("stroke_enabled", False))
         stroke_width = int(self._wm_settings.get("stroke_width", 2))
         stroke_color = self._wm_settings.get("stroke_color", QColor(255, 255, 255))
+        if not isinstance(stroke_color, QColor):
+            stroke_color = QColor(255, 255, 255)
 
-        # 保存当前位置（如果存在且有效）
-        current_pos = None
-        current_is_custom = False
-        
-        # 首先检查设置中是否已经有自定义位置信息
-        has_custom_position = (self._wm_settings.get("position") == "custom" or 
-                              "pos_x_pct" in self._wm_settings or 
-                              "pos_x" in self._wm_settings)
-        
-        if self._wm_item is not None and shiboken6.isValid(self._wm_item):
-            current_pos = self._wm_item.pos()
-            current_is_custom = has_custom_position
-        elif has_custom_position:
-            # 即使当前没有有效的水印项，但设置中有自定义位置，也应该恢复
-            current_is_custom = True
+        # 读取字体族与样式（应用用户选择的字体）
+        font_family = self._wm_settings.get("font_family", "")
+        font_bold = bool(self._wm_settings.get("font_bold", False))
+        font_italic = bool(self._wm_settings.get("font_italic", False))
 
-        # 记录是否需要重新创建文本项
-        need_recreate = False
-        
-        # 根据是否需要描边效果选择不同的文本项类型
-        if stroke_enabled:
-            # 如果当前不是描边文本项或者不存在，创建新的描边文本项
-            if self._wm_item is None or not isinstance(self._wm_item, StrokedTextItem):
-                if self._wm_item is not None:
-                    self._scene.removeItem(self._wm_item)
+        # 新建项标志：用于区分场景清空后新创建的水印项是否应直接使用旧位置
+        just_created = False
+
+        # 创建或更新水印项
+        if self._wm_item is None:
+            if stroke_enabled:
                 self._wm_item = StrokedTextItem()
-                need_recreate = True
-            
-            # 设置描边属性
-            self._wm_item.set_stroke(stroke_width, stroke_color)
-        else:
-            # 如果当前不是普通文本项或者不存在，创建新的普通文本项
-            if self._wm_item is None or isinstance(self._wm_item, StrokedTextItem):
-                if self._wm_item is not None:
-                    self._scene.removeItem(self._wm_item)
+                self._wm_item.set_stroke(stroke_width, stroke_color)
+            else:
                 self._wm_item = QGraphicsTextItem()
-                need_recreate = True
-
-        # 如果重新创建了文本项，设置基本属性
-        if need_recreate:
-            self._wm_item.setDefaultTextColor(color if isinstance(color, QColor) else QColor(0, 0, 0))
-            self._wm_item.setOpacity(opacity)
             self._wm_item.setZValue(1001)
             self._wm_item.setFlags(
                 QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -232,6 +205,8 @@ class PreviewView(QGraphicsView):
             )
             self._wm_item.setAcceptHoverEvents(True)
             self._scene.addItem(self._wm_item)
+            # 标记为刚创建，用于后续位置恢复逻辑
+            just_created = True
 
         self._wm_item.setPlainText(text)
         
@@ -258,10 +233,14 @@ class PreviewView(QGraphicsView):
         else:
             self._wm_item.setGraphicsEffect(None)
 
+        # 定义当前位置标志与当前位置
+        current_is_custom = (self._wm_settings.get("position") == "custom")
+        current_pos = self._wm_item.pos() if self._wm_item is not None else None
+
         # 如果有保存的位置且是自定义位置，恢复位置
         if current_is_custom:
-            # 如果有当前位置，直接使用
-            if current_pos is not None:
+            # 如果有当前位置且不是刚创建（避免默认(0,0)误判），直接使用
+            if current_pos is not None and not just_created:
                 self._wm_item.setPos(current_pos)
                 # 更新设置中的位置信息
                 self._wm_settings["position"] = "custom"
@@ -287,10 +266,10 @@ class PreviewView(QGraphicsView):
                 y = float(self._wm_settings.get("pos_y", 0))
                 self._wm_item.setPos(x, y)
                 return
-
-        # 否则按照位置设置计算新位置
-        img_rect = self._scene.sceneRect()
-        wm_rect = self._wm_item.boundingRect()
+ 
+         # 否则按照位置设置计算新位置
+         img_rect = self._scene.sceneRect()
+         wm_rect = self._wm_item.boundingRect()
         
         # 为阴影和描边预留额外空间
         extra_margin = 0
@@ -440,64 +419,115 @@ class PreviewView(QGraphicsView):
         color = self._wm_settings.get("color", QColor(0, 0, 0))
         if not isinstance(color, QColor):
             color = QColor(0, 0, 0)
+    
+        # 读取阴影与描边配置
+        shadow_enabled = bool(self._wm_settings.get("shadow_enabled", False))
+        shadow_offset = int(self._wm_settings.get("shadow_offset", 2))
+        shadow_blur = int(self._wm_settings.get("shadow_blur", 5))
+        shadow_color = self._wm_settings.get("shadow_color", QColor(0, 0, 0))
+        if not isinstance(shadow_color, QColor):
+            shadow_color = QColor(0, 0, 0)
+        stroke_enabled = bool(self._wm_settings.get("stroke_enabled", False))
+        stroke_width = int(self._wm_settings.get("stroke_width", 2))
+        stroke_color = self._wm_settings.get("stroke_color", QColor(255, 255, 255))
+        if not isinstance(stroke_color, QColor):
+            stroke_color = QColor(255, 255, 255)
 
-        font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+        # 构造字体（应用用户选择的字体族与样式）
+        font_family = self._wm_settings.get("font_family", "")
+        font_bold = bool(self._wm_settings.get("font_bold", False))
+        font_italic = bool(self._wm_settings.get("font_italic", False))
+        if font_family:
+            font = QFont(font_family)
+        else:
+            font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
         font.setPointSize(font_size)
-        metrics = QFontMetricsF(font)
+        font.setBold(font_bold)
+        font.setItalic(font_italic)
+    
+        # 用场景渲染文本（包含阴影与描边），生成透明文本图层
+        text_scene = QGraphicsScene()
+        if stroke_enabled:
+            text_item = StrokedTextItem()
+            text_item.set_stroke(stroke_width, stroke_color)
+        else:
+            text_item = QGraphicsTextItem()
+        text_item.setPlainText(text)
+        text_item.setDefaultTextColor(color)
+        text_item.setFont(font)
+        text_item.setOpacity(opacity)
+        if shadow_enabled:
+            eff = QGraphicsDropShadowEffect()
+            eff.setOffset(shadow_offset, shadow_offset)
+            eff.setBlurRadius(shadow_blur)
+            eff.setColor(shadow_color)
+            text_item.setGraphicsEffect(eff)
+        text_scene.addItem(text_item)
+        # 计算文本场景的包围矩形（包含阴影扩展）
+        text_rect = text_scene.itemsBoundingRect()
+        text_scene.setSceneRect(text_rect)
+        text_img = QImage(int(text_rect.width()), int(text_rect.height()), QImage.Format_ARGB32)
+        text_img.fill(QColor(0, 0, 0, 0))
+        painter_layer = QPainter(text_img)
+        # 将文本项移动使其从(0,0)开始渲染
+        text_item.setPos(text_item.pos() - text_rect.topLeft())
+        text_scene.render(painter_layer)
+        painter_layer.end()
 
+        # 位置计算：支持枚举位置与自定义坐标（使用文本图层尺寸）
         painter = QPainter(img)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
-        painter.setOpacity(opacity)
-        painter.setFont(font)
-        painter.setPen(color)
 
-        # 位置计算：支持枚举位置与自定义坐标
+        text_w = text_img.width()
+        text_h = text_img.height()
         if position == "custom":
             # 优先使用百分比映射位置；回退到像素坐标
             if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
-                pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
-                pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
-                cx = pct_x * img.width()
-                cy = pct_y * img.height()
+                cx = float(self._wm_settings.get("pos_x_pct", 0.0)) * img.width()
+                cy = float(self._wm_settings.get("pos_y_pct", 0.0)) * img.height()
             else:
                 cx = float(self._wm_settings.get("pos_x", margin))
                 cy = float(self._wm_settings.get("pos_y", margin))
-            # 使用字体度量，按左上角锚定绘制，确保与预览一致
-            fm = painter.fontMetrics()
-            text_w = fm.horizontalAdvance(text)
-            text_h = fm.height()
             # 夹紧范围到内容区域（避免文字溢出右下边界）
             min_x = margin
             min_y = margin
             max_x = img.width() - margin - text_w
             max_y = img.height() - margin - text_h
-            cx = max(min_x, min(max_x, cx))
-            cy = max(min_y, min(max_y, cy))
-            rect = QRect(int(cx), int(cy), int(text_w), int(text_h))
-            painter.drawText(rect, Qt.AlignLeft | Qt.AlignTop, text)
+            x = max(min_x, min(max_x, cx))
+            y = max(min_y, min(max_y, cy))
+            painter.drawImage(int(x), int(y), text_img)
         else:
             # 使用内容区域 + 对齐绘制
             content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
             if position == "top_left":
-                align = Qt.AlignLeft | Qt.AlignTop
+                x = content_rect.left()
+                y = content_rect.top()
             elif position == "top_right":
-                align = Qt.AlignRight | Qt.AlignTop
+                x = content_rect.right() - text_w
+                y = content_rect.top()
             elif position == "bottom_left":
-                align = Qt.AlignLeft | Qt.AlignBottom
+                x = content_rect.left()
+                y = content_rect.bottom() - text_h
             elif position == "bottom_right":
-                align = Qt.AlignRight | Qt.AlignBottom
+                x = content_rect.right() - text_w
+                y = content_rect.bottom() - text_h
             elif position == "top_center":
-                align = Qt.AlignHCenter | Qt.AlignTop
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.top()
             elif position == "bottom_center":
-                align = Qt.AlignHCenter | Qt.AlignBottom
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.bottom() - text_h
             elif position == "center_left":
-                align = Qt.AlignLeft | Qt.AlignVCenter
+                x = content_rect.left()
+                y = content_rect.center().y() - text_h // 2
             elif position == "center_right":
-                align = Qt.AlignRight | Qt.AlignVCenter
-            else:
-                align = Qt.AlignHCenter | Qt.AlignVCenter
-            painter.drawText(content_rect, align, text)
+                x = content_rect.right() - text_w
+                y = content_rect.center().y() - text_h // 2
+            else:  # center
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.center().y() - text_h // 2
+            painter.drawImage(int(x), int(y), text_img)
         painter.end()
         return img
 
@@ -522,55 +552,107 @@ class PreviewView(QGraphicsView):
         if not isinstance(color, QColor):
             color = QColor(0, 0, 0)
 
-        font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
-        font.setPointSize(font_size)
+        # 读取阴影与描边配置
+        shadow_enabled = bool(wm.get("shadow_enabled", False))
+        shadow_offset = int(wm.get("shadow_offset", 2))
+        shadow_blur = int(wm.get("shadow_blur", 5))
+        shadow_color = wm.get("shadow_color", QColor(0, 0, 0))
+        if not isinstance(shadow_color, QColor):
+            shadow_color = QColor(0, 0, 0)
+        stroke_enabled = bool(wm.get("stroke_enabled", False))
+        stroke_width = int(wm.get("stroke_width", 2))
+        stroke_color = wm.get("stroke_color", QColor(255, 255, 255))
+        if not isinstance(stroke_color, QColor):
+            stroke_color = QColor(255, 255, 255)
 
+        # 构造字体（应用用户选择的字体族与样式）
+        font_family = wm.get("font_family", "")
+        font_bold = bool(wm.get("font_bold", False))
+        font_italic = bool(wm.get("font_italic", False))
+        if font_family:
+            font = QFont(font_family)
+        else:
+            font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+        font.setPointSize(font_size)
+        font.setBold(font_bold)
+        font.setItalic(font_italic)
+
+        # 用场景渲染文本（包含阴影与描边），生成透明文本图层
+        text_scene = QGraphicsScene()
+        if stroke_enabled:
+            text_item = StrokedTextItem()
+            text_item.set_stroke(stroke_width, stroke_color)
+        else:
+            text_item = QGraphicsTextItem()
+        text_item.setPlainText(text)
+        text_item.setDefaultTextColor(color)
+        text_item.setFont(font)
+        text_item.setOpacity(opacity)
+        if shadow_enabled:
+            eff = QGraphicsDropShadowEffect()
+            eff.setOffset(shadow_offset, shadow_offset)
+            eff.setBlurRadius(shadow_blur)
+            eff.setColor(shadow_color)
+            text_item.setGraphicsEffect(eff)
+        text_scene.addItem(text_item)
+        text_rect = text_scene.itemsBoundingRect()
+        text_scene.setSceneRect(text_rect)
+        text_img = QImage(int(text_rect.width()), int(text_rect.height()), QImage.Format_ARGB32)
+        text_img.fill(QColor(0, 0, 0, 0))
+        painter_layer = QPainter(text_img)
+        text_item.setPos(text_item.pos() - text_rect.topLeft())
+        text_scene.render(painter_layer)
+        painter_layer.end()
+
+        # 位置计算与绘制
         painter = QPainter(img)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
-        painter.setOpacity(opacity)
-        painter.setFont(font)
-        painter.setPen(color)
-
+        text_w = text_img.width()
+        text_h = text_img.height()
         if position == "custom":
-            # 优先使用百分比位置；回退到像素坐标
             if "pos_x_pct" in wm and "pos_y_pct" in wm:
                 cx = float(wm.get("pos_x_pct", 0.0)) * img.width()
                 cy = float(wm.get("pos_y_pct", 0.0)) * img.height()
             else:
                 cx = float(wm.get("pos_x", margin))
                 cy = float(wm.get("pos_y", margin))
-            fm = painter.fontMetrics()
-            text_w = fm.horizontalAdvance(text)
-            text_h = fm.height()
             min_x = margin
             min_y = margin
             max_x = img.width() - margin - text_w
             max_y = img.height() - margin - text_h
-            cx = max(min_x, min(max_x, cx))
-            cy = max(min_y, min(max_y, cy))
-            rect = QRect(int(cx), int(cy), int(text_w), int(text_h))
-            painter.drawText(rect, Qt.AlignLeft | Qt.AlignTop, text)
+            x = max(min_x, min(max_x, cx))
+            y = max(min_y, min(max_y, cy))
+            painter.drawImage(int(x), int(y), text_img)
         else:
             content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
             if position == "top_left":
-                align = Qt.AlignLeft | Qt.AlignTop
+                x = content_rect.left()
+                y = content_rect.top()
             elif position == "top_right":
-                align = Qt.AlignRight | Qt.AlignTop
+                x = content_rect.right() - text_w
+                y = content_rect.top()
             elif position == "bottom_left":
-                align = Qt.AlignLeft | Qt.AlignBottom
+                x = content_rect.left()
+                y = content_rect.bottom() - text_h
             elif position == "bottom_right":
-                align = Qt.AlignRight | Qt.AlignBottom
+                x = content_rect.right() - text_w
+                y = content_rect.bottom() - text_h
             elif position == "top_center":
-                align = Qt.AlignHCenter | Qt.AlignTop
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.top()
             elif position == "bottom_center":
-                align = Qt.AlignHCenter | Qt.AlignBottom
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.bottom() - text_h
             elif position == "center_left":
-                align = Qt.AlignLeft | Qt.AlignVCenter
+                x = content_rect.left()
+                y = content_rect.center().y() - text_h // 2
             elif position == "center_right":
-                align = Qt.AlignRight | Qt.AlignVCenter
+                x = content_rect.right() - text_w
+                y = content_rect.center().y() - text_h // 2
             else:
-                align = Qt.AlignHCenter | Qt.AlignVCenter
-            painter.drawText(content_rect, align, text)
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.center().y() - text_h // 2
+            painter.drawImage(int(x), int(y), text_img)
         painter.end()
         return img

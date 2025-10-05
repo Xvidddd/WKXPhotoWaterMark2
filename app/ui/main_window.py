@@ -171,10 +171,10 @@ class MainWindow(QMainWindow):
             del item
 
     def _load_last_session_on_start(self):
-        from app.services.templates import load_template
+        from app.services.templates import load_last_session
         
-        # 尝试加载特定名称的模板
-        data = load_template("上次设置")
+        # 尝试加载上次会话
+        data = load_last_session()
         if data and hasattr(self, 'wm_panel') and hasattr(self, 'preview'):
             # 应用到面板与预览
             self.wm_panel.apply_settings(data)
@@ -242,11 +242,10 @@ class MainWindow(QMainWindow):
 
 
     def closeEvent(self, event) -> None:
-        # 关闭时保存到特定名称的模板
-        from app.services.templates import save_template
+        # 关闭时保存当前会话
+        from app.services.templates import save_last_session
         data = self._collect_current_settings()
-        # 使用固定名称"上次设置"作为特定模板名称
-        save_template("上次设置", data)
+        save_last_session(data)
         super().closeEvent(event)
 
     def _on_save_template(self) -> None:
@@ -344,8 +343,7 @@ class MainWindow(QMainWindow):
         if count == 0:
             QMessageBox.information(self, "无图片", "列表为空，请先导入图片。")
             return
-        # 默认导出到桌面而不是原图所在文件夹，防止覆盖原图
-        out_dir = QFileDialog.getExistingDirectory(self, "选择导出文件夹", str(Path.home() / "Desktop"))
+        out_dir = QFileDialog.getExistingDirectory(self, "选择导出文件夹", str(Path.home()))
         if not out_dir:
             return
 
@@ -476,13 +474,10 @@ class MainWindow(QMainWindow):
             default_name = f"{src_path.stem}{value}.png"
         else:
             default_name = f"{src_path.stem}.png"
-            
-        # 默认导出到桌面而不是原图所在文件夹，防止覆盖原图
-        desktop_path = Path.home() / "Desktop"
         save_path_str, sel_filter = QFileDialog.getSaveFileName(
             self,
             "导出图片",
-            str(desktop_path / default_name),
+            str(src_path.with_name(default_name)),
             "PNG 图像 (*.png);;JPEG 图像 (*.jpg *.jpeg)"
         )
         if not save_path_str:

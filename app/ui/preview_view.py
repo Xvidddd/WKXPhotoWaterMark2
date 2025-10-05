@@ -129,7 +129,22 @@ class PreviewView(QGraphicsView):
                 self._apply_transform()
 
     def set_watermark_settings(self, settings: dict) -> None:
+        # 保存当前的自定义位置信息（如果存在）
+        custom_position_data = {}
+        if self._wm_settings and self._wm_settings.get("position") == "custom":
+            # 保存所有自定义位置相关的数据
+            for key in ["position", "pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]:
+                if key in self._wm_settings:
+                    custom_position_data[key] = self._wm_settings[key]
+        
+        # 更新设置
         self._wm_settings = settings
+        
+        # 如果有保存的自定义位置数据，且新设置中没有指定位置为custom，则恢复自定义位置
+        if custom_position_data and settings.get("position") != "custom":
+            # 恢复自定义位置数据
+            self._wm_settings.update(custom_position_data)
+        
         self._apply_watermark()
 
     def _apply_watermark(self) -> None:

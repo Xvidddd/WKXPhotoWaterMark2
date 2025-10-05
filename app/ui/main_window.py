@@ -344,7 +344,8 @@ class MainWindow(QMainWindow):
         if count == 0:
             QMessageBox.information(self, "无图片", "列表为空，请先导入图片。")
             return
-        out_dir = QFileDialog.getExistingDirectory(self, "选择导出文件夹", str(Path.home()))
+        # 默认导出到桌面而不是原图所在文件夹，防止覆盖原图
+        out_dir = QFileDialog.getExistingDirectory(self, "选择导出文件夹", str(Path.home() / "Desktop"))
         if not out_dir:
             return
 
@@ -475,10 +476,13 @@ class MainWindow(QMainWindow):
             default_name = f"{src_path.stem}{value}.png"
         else:
             default_name = f"{src_path.stem}.png"
+            
+        # 默认导出到桌面而不是原图所在文件夹，防止覆盖原图
+        desktop_path = Path.home() / "Desktop"
         save_path_str, sel_filter = QFileDialog.getSaveFileName(
             self,
             "导出图片",
-            str(src_path.with_name(default_name)),
+            str(desktop_path / default_name),
             "PNG 图像 (*.png);;JPEG 图像 (*.jpg *.jpeg)"
         )
         if not save_path_str:

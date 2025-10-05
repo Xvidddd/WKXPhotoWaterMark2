@@ -129,23 +129,25 @@ class PreviewView(QGraphicsView):
                 self._apply_transform()
 
     def set_watermark_settings(self, settings: dict) -> None:
-         # 保存当前的自定义位置信息（如果存在）
-         custom_position_data = {}
-         if self._wm_settings and self._wm_settings.get("position") == "custom":
-             # 保存所有自定义位置相关的数据
-             for key in ["pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]:
-                 if key in self._wm_settings:
-                     custom_position_data[key] = self._wm_settings[key]
-         
-         # 更新设置
-         self._wm_settings = settings
-         
-         # 仅当新设置明确为 custom，且未提供坐标时，才恢复之前的自定义坐标
-         if self._wm_settings.get("position") == "custom" and custom_position_data:
-             for key in ["pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]:
-                 if key not in self._wm_settings and key in custom_position_data:
-                     self._wm_settings[key] = custom_position_data[key]
-         
+         # 读取旧设置
+         prev = self._wm_settings or {}
+         # 以旧设置为基础进行合并，避免未提供的键被丢弃
+         merged = dict(prev)
+         for k, v in settings.items():
+             merged[k] = v
+         # 如果新设置未提供 position，则保留旧的 position
+         if "position" not in settings and "position" in prev:
+             merged["position"] = prev["position"]
+         # 若最终位置为 custom：当新设置未提供坐标时，继承旧坐标（像素与百分比）
+         if merged.get("position") == "custom":
+             coord_keys = ["pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]
+             has_coords_in_new = any(k in settings for k in coord_keys)
+             if not has_coords_in_new:
+                 for k in coord_keys:
+                     if k in prev and k not in merged:
+                         merged[k] = prev[k]
+         # 应用合并后的设置
+         self._wm_settings = merged
          self._apply_watermark()
 
     def _apply_watermark(self) -> None:
@@ -266,11 +268,11 @@ class PreviewView(QGraphicsView):
                 y = float(self._wm_settings.get("pos_y", 0))
                 self._wm_item.setPos(x, y)
                 return
- 
-         # 否则按照位置设置计算新位置
-         img_rect = self._scene.sceneRect()
-         wm_rect = self._wm_item.boundingRect()
-        
+
+        # 否则按照位置设置计算新位置
+        img_rect = self._scene.sceneRect()
+        wm_rect = self._wm_item.boundingRect()
+
         # 为阴影和描边预留额外空间
         extra_margin = 0
         if shadow_enabled:

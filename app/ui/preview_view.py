@@ -241,6 +241,9 @@ class PreviewView(QGraphicsView):
         font_family = self._wm_settings.get("font_family", "")
         font_bold = bool(self._wm_settings.get("font_bold", False))
         font_italic = bool(self._wm_settings.get("font_italic", False))
+        
+        # 读取旋转角度
+        rotation_angle = float(self._wm_settings.get("rotation_angle", 0.0))
 
         # 新建项标志：用于区分场景清空后新创建的水印项是否应直接使用旧位置
         just_created = False
@@ -285,6 +288,11 @@ class PreviewView(QGraphicsView):
             self._wm_item.setOpacity(opacity)
             if isinstance(color, QColor):
                 self._wm_item.setDefaultTextColor(color)
+
+            # 设置旋转变换，变换原点为中心
+            rect = self._wm_item.boundingRect()
+            self._wm_item.setTransformOriginPoint(rect.center())
+            self._wm_item.setRotation(rotation_angle)
 
             # 设置阴影效果
             if shadow_enabled:
@@ -450,6 +458,10 @@ class PreviewView(QGraphicsView):
                 wm_pix = src_pix.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.SmoothTransformation)
             self._wm_img_item.setPixmap(wm_pix)
             self._wm_img_item.setOpacity(img_opacity)
+            # 设置旋转变换，变换原点为中心
+            rectf = self._wm_img_item.boundingRect()
+            self._wm_img_item.setTransformOriginPoint(rectf.center())
+            self._wm_img_item.setRotation(rotation_angle)
             # 文本项在图片模式下移除
             if self._wm_item is not None:
                 self._scene.removeItem(self._wm_item)
@@ -624,207 +636,7 @@ class PreviewView(QGraphicsView):
 
         wm = settings or self._wm_settings or {}
         wm_type = wm.get("wm_type", "text")
-        if wm_type == "image":
-            # 图片水印导出
-            img_path = wm.get("image_path", "")
-            if not img_path:
-                return img
-            wm_img = QImage(img_path)
-            if wm_img.isNull():
-                return img
-            opacity = float(wm.get("img_opacity", 0.6))
-            margin = int(wm.get("margin", 20))
-            scale_mode = wm.get("img_scale_mode", "proportional")
-            if scale_mode == "proportional":
-                pct = int(wm.get("img_scale_pct", 100))
-                target_w = max(1, int(wm_img.width() * pct / 100.0))
-                target_h = max(1, int(wm_img.height() * pct / 100.0))
-                wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            else:
-                target_w = max(1, int(wm.get("img_width", wm_img.width())))
-                target_h = max(1, int(wm.get("img_height", wm_img.height())))
-                wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-
-            painter = QPainter(img)
-            painter.setOpacity(opacity)
-            wm_w = wm_scaled.width()
-            wm_h = wm_scaled.height()
-            position = wm.get("position", "bottom_right")
-            if position == "custom":
-                if "pos_x_pct" in wm and "pos_y_pct" in wm:
-                    cx = float(wm.get("pos_x_pct", 0.0)) * img.width()
-                    cy = float(wm.get("pos_y_pct", 0.0)) * img.height()
-                else:
-                    cx = float(wm.get("pos_x", margin))
-                    cy = float(wm.get("pos_y", margin))
-            
-                # 与预览保持一致：自定义位置按图像边界夹紧（不使用 margin）
-                min_x = 0
-                min_y = 0
-                max_x = img.width() - wm_w
-                max_y = img.height() - wm_h
-                x = max(min_x, min(max_x, cx))
-                y = max(min_y, min(max_y, cy))
-
-                painter.drawImage(int(x), int(y), wm_scaled)
-            else:
-                content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
-                if position == "top_left":
-                    x = content_rect.left()
-                    y = content_rect.top()
-                elif position == "top_right":
-                    x = content_rect.right() - wm_w
-                    y = content_rect.top()
-                elif position == "bottom_left":
-                    x = content_rect.left()
-                    y = content_rect.bottom() - wm_h
-                elif position == "bottom_right":
-                    x = content_rect.right() - wm_w
-                    y = content_rect.bottom() - wm_h
-                elif position == "top_center":
-                    x = content_rect.center().x() - wm_w // 2
-                    y = content_rect.top()
-                elif position == "bottom_center":
-                    x = content_rect.center().x() - wm_w // 2
-                    y = content_rect.bottom() - wm_h
-                elif position == "center_left":
-                    x = content_rect.left()
-                    y = content_rect.center().y() - wm_h // 2
-                elif position == "center_right":
-                    x = content_rect.right() - wm_w
-                    y = content_rect.center().y() - wm_h // 2
-                else:  # center
-                    x = content_rect.center().x() - wm_w // 2
-                    y = content_rect.center().y() - wm_h // 2
-                painter.drawImage(int(x), int(y), wm_scaled)
-            painter.end()
-            return img
-
-        text = wm.get("text", "")
-        if not text:
-            return img
-        font_size = int(wm.get("font_size", 32))
-        opacity = float(wm.get("opacity", 0.6))
-        margin = int(wm.get("margin", 20))
-        position = wm.get("position", "bottom_right")
-        color = wm.get("color", QColor(0, 0, 0))
-        if not isinstance(color, QColor):
-            color = QColor(0, 0, 0)
-
-        shadow_enabled = bool(wm.get("shadow_enabled", False))
-        shadow_offset = int(wm.get("shadow_offset", 2))
-        shadow_blur = int(wm.get("shadow_blur", 5))
-        shadow_color = wm.get("shadow_color", QColor(0, 0, 0))
-        if not isinstance(shadow_color, QColor):
-            shadow_color = QColor(0, 0, 0)
-        stroke_enabled = bool(wm.get("stroke_enabled", False))
-        stroke_width = int(wm.get("stroke_width", 2))
-        stroke_color = wm.get("stroke_color", QColor(255, 255, 255))
-        if not isinstance(stroke_color, QColor):
-            stroke_color = QColor(255, 255, 255)
-
-        font_family = wm.get("font_family", "")
-        font_bold = bool(wm.get("font_bold", False))
-        font_italic = bool(wm.get("font_italic", False))
-        if font_family:
-            font = QFont(font_family)
-        else:
-            font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
-        font.setPointSize(font_size)
-        font.setBold(font_bold)
-        font.setItalic(font_italic)
-
-        text_scene = QGraphicsScene()
-        if stroke_enabled:
-            text_item = StrokedTextItem()
-            text_item.set_stroke(stroke_width, stroke_color)
-        else:
-            text_item = QGraphicsTextItem()
-        text_item.setPlainText(text)
-        text_item.setDefaultTextColor(color)
-        text_item.setFont(font)
-        text_item.setOpacity(opacity)
-        if shadow_enabled:
-            eff = QGraphicsDropShadowEffect()
-            eff.setOffset(shadow_offset, shadow_offset)
-            eff.setBlurRadius(shadow_blur)
-            eff.setColor(shadow_color)
-            text_item.setGraphicsEffect(eff)
-        text_scene.addItem(text_item)
-        text_rect = text_scene.itemsBoundingRect()
-        text_scene.setSceneRect(text_rect)
-        text_img = QImage(int(text_rect.width()), int(text_rect.height()), QImage.Format_ARGB32)
-        text_img.fill(QColor(0, 0, 0, 0))
-        painter_layer = QPainter(text_img)
-        text_item.setPos(text_item.pos() - text_rect.topLeft())
-        text_scene.render(painter_layer)
-        painter_layer.end()
-
-        painter = QPainter(img)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.TextAntialiasing, True)
-
-        text_w = text_img.width()
-        text_h = text_img.height()
-        if position == "custom":
-            if "pos_x_pct" in wm and "pos_y_pct" in wm:
-                cx = float(wm.get("pos_x_pct", 0.0)) * img.width()
-                cy = float(wm.get("pos_y_pct", 0.0)) * img.height()
-            else:
-                cx = float(wm.get("pos_x", margin))
-                cy = float(wm.get("pos_y", margin))
-            min_x = margin
-            min_y = margin
-            max_x = img.width() - margin - text_w
-            max_y = img.height() - margin - text_h
-            x = max(min_x, min(max_x, cx))
-            y = max(min_y, min(max_y, cy))
-            painter.drawImage(int(x), int(y), text_img)
-        else:
-            content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
-            if position == "top_left":
-                x = content_rect.left()
-                y = content_rect.top()
-            elif position == "top_right":
-                x = content_rect.right() - text_w
-                y = content_rect.top()
-            elif position == "bottom_left":
-                x = content_rect.left()
-                y = content_rect.bottom() - text_h
-            elif position == "bottom_right":
-                x = content_rect.right() - text_w
-                y = content_rect.bottom() - text_h
-            elif position == "top_center":
-                x = content_rect.center().x() - text_w // 2
-                y = content_rect.top()
-            elif position == "bottom_center":
-                x = content_rect.center().x() - text_w // 2
-                y = content_rect.bottom() - text_h
-            elif position == "center_left":
-                x = content_rect.left()
-                y = content_rect.center().y() - text_h // 2
-            elif position == "center_right":
-                x = content_rect.right() - text_w
-                y = content_rect.center().y() - text_h // 2
-            else:  # center
-                x = content_rect.center().x() - text_w // 2
-                y = content_rect.center().y() - text_h // 2
-            painter.drawImage(int(x), int(y), text_img)
-        painter.end()
-        return img
-
-
-    def compose_qimage_for_path_duplicate(self, path: str, settings: dict | None = None):
-        # 离屏合成：直接从文件读取为 QImage 并绘制水印
-        if not path:
-            return None
-        img = QImage(path)
-        if img.isNull():
-            return None
-        img = img.convertToFormat(QImage.Format_ARGB32)
-
-        wm = settings or self._wm_settings or {}
-        wm_type = wm.get("wm_type", "text")
+        rotation_angle = float(wm.get("rotation_angle", 0.0))
         if wm_type == "image":
             # 图片水印导出
             img_path = wm.get("image_path", "")
@@ -866,7 +678,14 @@ class PreviewView(QGraphicsView):
                 max_y = img.height() - wm_h
                 x = max(min_x, min(max_x, cx))
                 y = max(min_y, min(max_y, cy))
-                painter.drawImage(int(x), int(y), wm_scaled)
+                if rotation_angle:
+                    painter.save()
+                    painter.translate(int(x + wm_w / 2), int(y + wm_h / 2))
+                    painter.rotate(rotation_angle)
+                    painter.drawImage(int(-wm_w / 2), int(-wm_h / 2), wm_scaled)
+                    painter.restore()
+                else:
+                    painter.drawImage(int(x), int(y), wm_scaled)
             else:
                 content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
                 if position == "top_left":
@@ -896,7 +715,14 @@ class PreviewView(QGraphicsView):
                 else:
                     x = content_rect.center().x() - wm_w // 2
                     y = content_rect.center().y() - wm_h // 2
-                painter.drawImage(int(x), int(y), wm_scaled)
+                if rotation_angle:
+                    painter.save()
+                    painter.translate(int(x + wm_w / 2), int(y + wm_h / 2))
+                    painter.rotate(rotation_angle)
+                    painter.drawImage(int(-wm_w / 2), int(-wm_h / 2), wm_scaled)
+                    painter.restore()
+                else:
+                    painter.drawImage(int(x), int(y), wm_scaled)
             painter.end()
             return img
 
@@ -980,7 +806,14 @@ class PreviewView(QGraphicsView):
             max_y = img.height() - text_h
             x = max(min_x, min(max_x, cx))
             y = max(min_y, min(max_y, cy))
-            painter.drawImage(int(x), int(y), text_img)
+            if rotation_angle:
+                painter.save()
+                painter.translate(int(x + text_w / 2), int(y + text_h / 2))
+                painter.rotate(rotation_angle)
+                painter.drawImage(int(-text_w / 2), int(-text_h / 2), text_img)
+                painter.restore()
+            else:
+                painter.drawImage(int(x), int(y), text_img)
         else:
             content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
             if position == "top_left":
@@ -1007,9 +840,238 @@ class PreviewView(QGraphicsView):
             elif position == "center_right":
                 x = content_rect.right() - text_w
                 y = content_rect.center().y() - text_h // 2
-            else:
+            else:  # center
                 x = content_rect.center().x() - text_w // 2
                 y = content_rect.center().y() - text_h // 2
             painter.drawImage(int(x), int(y), text_img)
+        painter.end()
+        return img
+
+
+    def compose_qimage_for_path_duplicate(self, path: str, settings: dict | None = None):
+        # 离屏合成：直接从文件读取为 QImage 并绘制水印
+        if not path:
+            return None
+        img = QImage(path)
+        if img.isNull():
+            return None
+        img = img.convertToFormat(QImage.Format_ARGB32)
+
+        wm = settings or self._wm_settings or {}
+        wm_type = wm.get("wm_type", "text")
+        if wm_type == "image":
+            # 图片水印导出
+            img_path = wm.get("image_path", "")
+            if not img_path:
+                return img
+            wm_img = QImage(img_path)
+            if wm_img.isNull():
+                return img
+            opacity = float(wm.get("img_opacity", 0.6))
+            margin = int(wm.get("margin", 20))
+            scale_mode = wm.get("img_scale_mode", "proportional")
+            if scale_mode == "proportional":
+                pct = int(wm.get("img_scale_pct", 100))
+                target_w = max(1, int(wm_img.width() * pct / 100.0))
+                target_h = max(1, int(wm_img.height() * pct / 100.0))
+                wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            else:
+                target_w = max(1, int(wm.get("img_width", wm_img.width())))
+                target_h = max(1, int(wm.get("img_height", wm_img.height())))
+                wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+            painter = QPainter(img)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setOpacity(opacity)
+            wm_w = wm_scaled.width()
+            wm_h = wm_scaled.height()
+            rotation_angle = float(wm.get("rotation_angle", 0.0))
+            position = wm.get("position", "bottom_right")
+            if position == "custom":
+                if "pos_x_pct" in wm and "pos_y_pct" in wm:
+                    cx = float(wm.get("pos_x_pct", 0.0)) * img.width()
+                    cy = float(wm.get("pos_y_pct", 0.0)) * img.height()
+                else:
+                    cx = float(wm.get("pos_x", margin))
+                    cy = float(wm.get("pos_y", margin))
+                # 与预览保持一致：自定义位置按图像边界夹紧（不使用 margin）
+                min_x = 0
+                min_y = 0
+                max_x = img.width() - wm_w
+                max_y = img.height() - wm_h
+                x = max(min_x, min(max_x, cx))
+                y = max(min_y, min(max_y, cy))
+                if rotation_angle:
+                    painter.save()
+                    painter.translate(int(x + wm_w / 2), int(y + wm_h / 2))
+                    painter.rotate(rotation_angle)
+                    painter.drawImage(int(-wm_w / 2), int(-wm_h / 2), wm_scaled)
+                    painter.restore()
+                else:
+                    painter.drawImage(int(x), int(y), wm_scaled)
+            else:
+                content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
+                if position == "top_left":
+                    x = content_rect.left()
+                    y = content_rect.top()
+                elif position == "top_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.top()
+                elif position == "bottom_left":
+                    x = content_rect.left()
+                    y = content_rect.bottom() - wm_h
+                elif position == "bottom_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.bottom() - wm_h
+                elif position == "top_center":
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.top()
+                elif position == "bottom_center":
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.bottom() - wm_h
+                elif position == "center_left":
+                    x = content_rect.left()
+                    y = content_rect.center().y() - wm_h // 2
+                elif position == "center_right":
+                    x = content_rect.right() - wm_w
+                    y = content_rect.center().y() - wm_h // 2
+                else:
+                    x = content_rect.center().x() - wm_w // 2
+                    y = content_rect.center().y() - wm_h // 2
+                if rotation_angle:
+                    painter.save()
+                    painter.translate(int(x + wm_w / 2), int(y + wm_h / 2))
+                    painter.rotate(rotation_angle)
+                    painter.drawImage(int(-wm_w / 2), int(-wm_h / 2), wm_scaled)
+                    painter.restore()
+                else:
+                    painter.drawImage(int(x), int(y), wm_scaled)
+            painter.end()
+            return img
+
+        text = wm.get("text", "")
+        if not text:
+            return img
+        font_size = int(wm.get("font_size", 32))
+        opacity = float(wm.get("opacity", 0.6))
+        margin = int(wm.get("margin", 20))
+        position = wm.get("position", "bottom_right")
+        color = wm.get("color", QColor(0, 0, 0))
+        if not isinstance(color, QColor):
+            color = QColor(0, 0, 0)
+
+        shadow_enabled = bool(wm.get("shadow_enabled", False))
+        shadow_offset = int(wm.get("shadow_offset", 2))
+        shadow_blur = int(wm.get("shadow_blur", 5))
+        shadow_color = wm.get("shadow_color", QColor(0, 0, 0))
+        if not isinstance(shadow_color, QColor):
+            shadow_color = QColor(0, 0, 0)
+        stroke_enabled = bool(wm.get("stroke_enabled", False))
+        stroke_width = int(wm.get("stroke_width", 2))
+        stroke_color = wm.get("stroke_color", QColor(255, 255, 255))
+        if not isinstance(stroke_color, QColor):
+            stroke_color = QColor(255, 255, 255)
+
+        font_family = wm.get("font_family", "")
+        font_bold = bool(wm.get("font_bold", False))
+        font_italic = bool(wm.get("font_italic", False))
+        if font_family:
+            font = QFont(font_family)
+        else:
+            font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+        font.setPointSize(font_size)
+        font.setBold(font_bold)
+        font.setItalic(font_italic)
+
+        text_scene = QGraphicsScene()
+        if stroke_enabled:
+            text_item = StrokedTextItem()
+            text_item.set_stroke(stroke_width, stroke_color)
+        else:
+            text_item = QGraphicsTextItem()
+        text_item.setPlainText(text)
+        text_item.setDefaultTextColor(color)
+        text_item.setFont(font)
+        text_item.setOpacity(opacity)
+        if shadow_enabled:
+            eff = QGraphicsDropShadowEffect()
+            eff.setOffset(shadow_offset, shadow_offset)
+            eff.setBlurRadius(shadow_blur)
+            eff.setColor(shadow_color)
+            text_item.setGraphicsEffect(eff)
+        text_scene.addItem(text_item)
+        text_rect = text_scene.itemsBoundingRect()
+        text_scene.setSceneRect(text_rect)
+        text_img = QImage(int(text_rect.width()), int(text_rect.height()), QImage.Format_ARGB32)
+        text_img.fill(QColor(0, 0, 0, 0))
+        painter_layer = QPainter(text_img)
+        text_item.setPos(text_item.pos() - text_rect.topLeft())
+        text_scene.render(painter_layer)
+        painter_layer.end()
+
+        # 位置计算与绘制
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        text_w = text_img.width()
+        text_h = text_img.height()
+        if position == "custom":
+            if "pos_x_pct" in wm and "pos_y_pct" in wm:
+                cx = float(wm.get("pos_x_pct", 0.0)) * img.width()
+                cy = float(wm.get("pos_y_pct", 0.0)) * img.height()
+            else:
+                cx = float(wm.get("pos_x", margin))
+                cy = float(wm.get("pos_y", margin))
+            min_x = margin
+            min_y = margin
+            max_x = img.width() - margin - text_w
+            max_y = img.height() - margin - text_h
+            x = max(min_x, min(max_x, cx))
+            y = max(min_y, min(max_y, cy))
+            if rotation_angle:
+                painter.save()
+                painter.translate(int(x + text_w / 2), int(y + text_h / 2))
+                painter.rotate(rotation_angle)
+                painter.drawImage(int(-text_w / 2), int(-text_h / 2), text_img)
+                painter.restore()
+            else:
+                painter.drawImage(int(x), int(y), text_img)
+        else:
+            content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
+            if position == "top_left":
+                x = content_rect.left()
+                y = content_rect.top()
+            elif position == "top_right":
+                x = content_rect.right() - text_w
+                y = content_rect.top()
+            elif position == "bottom_left":
+                x = content_rect.left()
+                y = content_rect.bottom() - text_h
+            elif position == "bottom_right":
+                x = content_rect.right() - text_w
+                y = content_rect.bottom() - text_h
+            elif position == "top_center":
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.top()
+            elif position == "bottom_center":
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.bottom() - text_h
+            elif position == "center_left":
+                x = content_rect.left()
+                y = content_rect.center().y() - text_h // 2
+            elif position == "center_right":
+                x = content_rect.right() - text_w
+                y = content_rect.center().y() - text_h // 2
+            else:  # center
+                x = content_rect.center().x() - text_w // 2
+                y = content_rect.center().y() - text_h // 2
+            if rotation_angle:
+                painter.save()
+                painter.translate(int(x + text_w / 2), int(y + text_h / 2))
+                painter.rotate(rotation_angle)
+                painter.drawImage(int(-text_w / 2), int(-text_h / 2), text_img)
+                painter.restore()
+            else:
+                painter.drawImage(int(x), int(y), text_img)
         painter.end()
         return img

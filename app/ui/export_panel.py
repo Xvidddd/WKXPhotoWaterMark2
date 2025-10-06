@@ -3,12 +3,25 @@ from PySide6.QtWidgets import (
     QWidget,
     QFormLayout,
     QComboBox,
+    QSpinBox,
     QSlider,
     QLabel,
-    QSpinBox,
     QHBoxLayout,
 )
 
+
+class _NoWheelMixin:
+    def wheelEvent(self, event):
+        event.ignore()
+
+class NoWheelSpinBox(_NoWheelMixin, QSpinBox):
+    pass
+
+class NoWheelSlider(_NoWheelMixin, QSlider):
+    pass
+
+class NoWheelComboBox(_NoWheelMixin, QComboBox):
+    pass
 
 class ExportPanel(QWidget):
     settingsChanged = Signal(dict)
@@ -16,83 +29,32 @@ class ExportPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        # 导出格式选择
-        self.format = QComboBox()
-        self.format.addItems(["PNG", "JPEG"])
-        self.format.setCurrentIndex(0)  # 默认PNG
-
-        # JPEG质量滑块（0-100）
-        self.quality_label = QLabel("质量：80")
-        self.quality = QSlider(Qt.Orientation.Horizontal)
+        # 导出格式（保持与 MainWindow 期望的字段名一致）
+        self.format = NoWheelComboBox()
+        self.format.addItems(["PNG", "JPEG"])  # index: 0->PNG, 1->JPEG
+        # JPEG 质量
+        self.quality = NoWheelSlider(Qt.Orientation.Horizontal)
         self.quality.setRange(0, 100)
-        self.quality.setValue(80)  # 默认质量80
-        self.quality.setEnabled(False)  # 初始禁用（仅JPEG时启用）
+        self.quality.setValue(90)
 
-        # 图片尺寸调整
-        self.resize_mode = QComboBox()
-        self.resize_mode.addItems(["不调整", "按宽度", "按高度", "按百分比"])
-        self.resize_mode.setCurrentIndex(0)  # 默认不调整
-
-        self.resize_value = QSpinBox()
+        # 尺寸调整模式：与 MainWindow 的索引映射保持一致
+        # 0:none, 1:width, 2:height, 3:percent
+        self.resize_mode = NoWheelComboBox()
+        self.resize_mode.addItems(["不调整", "按宽度(像素)", "按高度(像素)", "按比例(%)"])
+        self.resize_value = NoWheelSpinBox()
         self.resize_value.setRange(1, 10000)
         self.resize_value.setValue(100)
-        self.resize_value.setEnabled(False)  # 初始禁用（仅选择调整模式时启用）
-        
-        # 百分比模式下的单位标签
-        self.resize_unit_label = QLabel("%")
-        self.resize_unit_label.setVisible(False)
 
-        # 尺寸调整水平布局
-        resize_layout = QHBoxLayout()
-        resize_layout.addWidget(self.resize_value)
-        resize_layout.addWidget(self.resize_unit_label)
-        resize_layout.addStretch()
-
-        # 主布局
         layout = QFormLayout(self)
-        layout.addRow("格式", self.format)
+        layout.addRow("导出格式", self.format)
         layout.addRow("JPEG质量", self.quality)
-        layout.addRow("", self.quality_label)
         layout.addRow("尺寸调整", self.resize_mode)
-        layout.addRow("", resize_layout)
+        layout.addRow("调整值", self.resize_value)
 
-        # 连接信号
-        self.format.currentIndexChanged.connect(self._on_format_changed)
-        self.quality.valueChanged.connect(self._on_quality_changed)
-        self.resize_mode.currentIndexChanged.connect(self._on_resize_mode_changed)
+        self.format.currentIndexChanged.connect(self._emit)
+        self.quality.valueChanged.connect(self._emit)
+        self.resize_mode.currentIndexChanged.connect(self._emit)
         self.resize_value.valueChanged.connect(self._emit)
-
-    def _on_format_changed(self, index):
-        # 仅当选择JPEG格式时启用质量滑块
-        is_jpeg = index == 1
-        self.quality.setEnabled(is_jpeg)
-        self.quality_label.setEnabled(is_jpeg)
-        self._emit()
-
-    def _on_quality_changed(self, value):
-        self.quality_label.setText(f"质量：{value}")
-        self._emit()
-
-    def _on_resize_mode_changed(self, index):
-        # 仅当选择调整模式时启用尺寸输入
-        enabled = index > 0
-        self.resize_value.setEnabled(enabled)
-        
-        # 根据模式设置单位标签
-        if index == 3:  # 百分比模式
-            self.resize_unit_label.setText("%")
-            self.resize_unit_label.setVisible(True)
-            self.resize_value.setValue(100)  # 默认100%
-            self.resize_value.setRange(1, 500)  # 百分比范围1-500%
-        elif index > 0:  # 宽度或高度模式
-            self.resize_unit_label.setText("px")
-            self.resize_unit_label.setVisible(True)
-            self.resize_value.setValue(1000)  # 默认1000px
-            self.resize_value.setRange(1, 10000)  # 像素范围1-10000px
-        else:
-            self.resize_unit_label.setVisible(False)
-        
-        self._emit()
 
     def _emit(self, *args) -> None:
         self.settingsChanged.emit(self.get_settings())
@@ -110,7 +72,7 @@ class ExportPanel(QWidget):
         fmt = settings.get("format", "PNG")
         self.format.setCurrentIndex(1 if fmt == "JPEG" else 0)
         
-        quality = settings.get("jpeg_quality", 80)
+        quality = settings.get("jpeg_quality", 90)
         if isinstance(quality, int):
             self.quality.setValue(quality)
         

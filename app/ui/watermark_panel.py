@@ -18,6 +18,22 @@ from PySide6.QtWidgets import (
 )
 
 
+class _NoWheelMixin:
+    """Mixin to disable wheel events on controls to prevent accidental changes."""
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelSpinBox(_NoWheelMixin, QSpinBox):
+    pass
+
+class NoWheelSlider(_NoWheelMixin, QSlider):
+    pass
+
+class NoWheelComboBox(_NoWheelMixin, QComboBox):
+    pass
+
+
 class WatermarkPanel(QWidget):
     settingsChanged = Signal(dict)
 
@@ -25,20 +41,20 @@ class WatermarkPanel(QWidget):
         super().__init__(parent)
 
         # 水印类型：文本或图片
-        self.wm_type = QComboBox()
+        self.wm_type = NoWheelComboBox()
         self.wm_type.addItems(["文本水印", "图片水印"])
         self.wm_type.setCurrentIndex(0)
 
         self.text = QLineEdit()
         self.text.setPlaceholderText("输入水印文字")
 
-        self.position = QComboBox()
+        self.position = NoWheelComboBox()
         # 九宫格位置：四角、中心、边缘中点（左居中/右居中/上居中/下居中）
         self.position.addItems(["左上", "右上", "左下", "右下", "居中", "上居中", "下居中", "左居中", "右居中"])
         self.position.setCurrentIndex(3)  # 默认右下
 
         # 字体选择
-        self.font_family = QComboBox()
+        self.font_family = NoWheelComboBox()
         # 加载系统所有字体
         font_families = QFontDatabase.families()
         self.font_family.addItems(font_families)
@@ -48,7 +64,7 @@ class WatermarkPanel(QWidget):
         if default_index >= 0:
             self.font_family.setCurrentIndex(default_index)
 
-        self.font_size = QSpinBox()
+        self.font_size = NoWheelSpinBox()
         self.font_size.setRange(8, 200)
         self.font_size.setValue(32)
 
@@ -64,10 +80,10 @@ class WatermarkPanel(QWidget):
         # 文本样式：阴影和描边
         # 阴影设置
         self.shadow_enabled = QCheckBox("启用阴影")
-        self.shadow_offset = QSpinBox()
+        self.shadow_offset = NoWheelSpinBox()
         self.shadow_offset.setRange(1, 10)
         self.shadow_offset.setValue(2)
-        self.shadow_blur = QSpinBox()
+        self.shadow_blur = NoWheelSpinBox()
         self.shadow_blur.setRange(0, 10)
         self.shadow_blur.setValue(2)
         
@@ -87,7 +103,7 @@ class WatermarkPanel(QWidget):
         
         # 描边设置
         self.stroke_enabled = QCheckBox("启用描边")
-        self.stroke_width = QSpinBox()
+        self.stroke_width = NoWheelSpinBox()
         self.stroke_width.setRange(1, 10)
         self.stroke_width.setValue(2)
         
@@ -112,13 +128,18 @@ class WatermarkPanel(QWidget):
         text_style_widget = QWidget()
         text_style_widget.setLayout(text_style_layout)
 
-        self.opacity = QSlider(Qt.Orientation.Horizontal)
+        self.opacity = NoWheelSlider(Qt.Orientation.Horizontal)
         self.opacity.setRange(0, 100)
         self.opacity.setValue(60)
 
-        self.margin = QSpinBox()
+        self.margin = NoWheelSpinBox()
         self.margin.setRange(0, 200)
         self.margin.setValue(20)
+
+        # 旋转角度（度）
+        self.rotation_angle = NoWheelSpinBox()
+        self.rotation_angle.setRange(0, 360)
+        self.rotation_angle.setValue(0)
 
         # 颜色选择器（默认黑色）
         self._color = QColor(0, 0, 0)
@@ -130,16 +151,16 @@ class WatermarkPanel(QWidget):
         self.image_path_label.setWordWrap(False)
         self.image_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.choose_image_btn = QPushButton("选择图片(PNG)")
-        self.img_opacity = QSlider(Qt.Orientation.Horizontal)
+        self.img_opacity = NoWheelSlider(Qt.Orientation.Horizontal)
         self.img_opacity.setRange(0, 100)
         self.img_opacity.setValue(60)
-        self.img_scale_mode = QComboBox()
+        self.img_scale_mode = NoWheelComboBox()
         self.img_scale_mode.addItems(["按比例缩放", "自由缩放"])
-        self.img_scale_pct = QSpinBox()
+        self.img_scale_pct = NoWheelSpinBox()
         self.img_scale_pct.setRange(1, 1000)
         self.img_scale_pct.setValue(100)
-        self.img_width = QSpinBox()
-        self.img_height = QSpinBox()
+        self.img_width = NoWheelSpinBox()
+        self.img_height = NoWheelSpinBox()
         self.img_width.setRange(1, 10000)
         self.img_height.setRange(1, 10000)
 
@@ -154,6 +175,7 @@ class WatermarkPanel(QWidget):
         layout.addRow("透明度", self.opacity)
         layout.addRow("颜色", self.color_btn)
         layout.addRow("边距", self.margin)
+        layout.addRow("旋转角度", self.rotation_angle)
         layout.addRow("文本效果", text_style_widget)
         layout.addRow("图片路径", self.image_path_label)
         layout.addRow("选择图片", self.choose_image_btn)
@@ -173,6 +195,7 @@ class WatermarkPanel(QWidget):
         self.font_italic.stateChanged.connect(self._emit)
         self.opacity.valueChanged.connect(self._emit)
         self.margin.valueChanged.connect(self._emit)
+        self.rotation_angle.valueChanged.connect(self._emit)
         self.color_btn.clicked.connect(self._choose_color)
         
         # 阴影和描边信号连接
@@ -209,6 +232,8 @@ class WatermarkPanel(QWidget):
         self.color_btn.setVisible(is_text)
         self.margin.setVisible(True)  # 两种类型均使用边距和位置
         self.position.setVisible(True)
+        # 旋转角度对两种类型都可见
+        self.rotation_angle.setVisible(True)
         # 文本效果
         self.shadow_enabled.setVisible(is_text)
         self.shadow_offset.setVisible(is_text)
@@ -253,6 +278,8 @@ class WatermarkPanel(QWidget):
             "opacity": float(self.opacity.value()) / 100.0,
             "margin": int(self.margin.value()),
             "color": self._color,
+            "margin": int(self.margin.value()),
+            "rotation_angle": int(self.rotation_angle.value()),
             # 阴影设置
             "shadow_enabled": self.shadow_enabled.isChecked(),
             "shadow_offset": self.shadow_offset.value(),
@@ -333,20 +360,24 @@ class WatermarkPanel(QWidget):
             }
             if pos in index_map:
                 self.position.setCurrentIndex(index_map[pos])
-                
+        # 新增：旋转角度设置
+        rotation_angle = settings.get("rotation_angle")
+        if isinstance(rotation_angle, int):
+            self.rotation_angle.setValue(max(0, min(360, rotation_angle)))
+        
         # 阴影设置
         shadow_enabled = settings.get("shadow_enabled")
         if isinstance(shadow_enabled, bool):
             self.shadow_enabled.setChecked(shadow_enabled)
-            
+        
         shadow_offset = settings.get("shadow_offset")
         if isinstance(shadow_offset, int):
             self.shadow_offset.setValue(shadow_offset)
-            
+        
         shadow_blur = settings.get("shadow_blur")
         if isinstance(shadow_blur, int):
             self.shadow_blur.setValue(shadow_blur)
-            
+        
         shadow_color = settings.get("shadow_color")
         if isinstance(shadow_color, QColor):
             self._shadow_color = shadow_color

@@ -28,6 +28,10 @@ build/
 dist/
 *.spec
 
+# Releases assets
+releases/
+*.zip
+
 # App data / cache
 cache/
 .pytest_cache/

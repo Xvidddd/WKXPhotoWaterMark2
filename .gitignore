@@ -43,8 +43,8 @@ tmp/
 # App specific
 templates/
 
-# Scripts
-*.ps1
+# Scripts: ignore sensitive release script only
+scripts/publish_release.ps1
 
 # Tests: ignore assistant-created test scripts and temp images
 scripts/test_export_effects.py

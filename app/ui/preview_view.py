@@ -668,13 +668,14 @@ class PreviewView(QGraphicsView):
                 else:
                     cx = float(wm.get("pos_x", margin))
                     cy = float(wm.get("pos_y", margin))
-                min_x = margin
-                min_y = margin
-                max_x = img.width() - margin - wm_w
-                max_y = img.height() - margin - wm_h
+                # 修改：自定义坐标使用无边距边界约束，避免水印超出图片时计算出现反向夹逼
+                min_x = 0
+                min_y = 0
+                max_x = img.width() - wm_w
+                max_y = img.height() - wm_h
                 x = max(min_x, min(max_x, cx))
                 y = max(min_y, min(max_y, cy))
-                print(f"[DEBUG] compose_qimage_for_path[{path}]: IMG custom -> draw at ({int(x)},{int(y)}) wm_size=({wm_w}x{wm_h}) img_size=({img.width()}x{img.height()}) coords={{'pos_x':wm.get('pos_x'),'pos_y':wm.get('pos_y'),'pos_x_pct':wm.get('pos_x_pct'),'pos_y_pct':wm.get('pos_y_pct')}} margin={margin}")
+                print(f"[DEBUG] compose_qimage_for_path[{path}]: IMG custom -> draw at ({int(x)},{int(y)}) wm_size=({wm_w}x{wm_h}) img_size=({img.width()}x{img.height()}) coords={{'pos_x': {wm.get('pos_x')}, 'pos_y': {wm.get('pos_y')}, 'pos_x_pct': {wm.get('pos_x_pct')}, 'pos_y_pct': {wm.get('pos_y_pct')}}} clamp=no_margin")
                 painter.drawImage(int(x), int(y), wm_scaled)
             else:
                 content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
@@ -782,12 +783,14 @@ class PreviewView(QGraphicsView):
             else:
                 cx = float(wm.get("pos_x", margin))
                 cy = float(wm.get("pos_y", margin))
-            min_x = margin
-            min_y = margin
-            max_x = img.width() - margin - text_w
-            max_y = img.height() - margin - text_h
+            # 自定义坐标使用无边距边界约束，避免文本水印在尺寸或位置超出图片时出现反向夹逼
+            min_x = 0
+            min_y = 0
+            max_x = img.width() - text_w
+            max_y = img.height() - text_h
             x = max(min_x, min(max_x, cx))
             y = max(min_y, min(max_y, cy))
+            print(f"[DEBUG][PreviewView] compose_qimage_for_path[{path}]: TEXT custom -> draw at ({int(x)},{int(y)}) text_size=({text_w}x{text_h}) img_size=({img.width()}x{img.height()}) clamp=no_margin")
             painter.drawImage(int(x), int(y), text_img)
         else:
             content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
@@ -868,10 +871,11 @@ class PreviewView(QGraphicsView):
                 else:
                     cx = float(wm.get("pos_x", margin))
                     cy = float(wm.get("pos_y", margin))
-                min_x = margin
-                min_y = margin
-                max_x = img.width() - margin - wm_w
-                max_y = img.height() - margin - wm_h
+                # 修改：自定义坐标使用无边距边界约束，避免水印超出图片时计算出现反向夹逼
+                min_x = 0
+                min_y = 0
+                max_x = img.width() - wm_w
+                max_y = img.height() - wm_h
                 x = max(min_x, min(max_x, cx))
                 y = max(min_y, min(max_y, cy))
                 painter.drawImage(int(x), int(y), wm_scaled)
@@ -981,12 +985,14 @@ class PreviewView(QGraphicsView):
             else:
                 cx = float(wm.get("pos_x", margin))
                 cy = float(wm.get("pos_y", margin))
-            min_x = margin
-            min_y = margin
-            max_x = img.width() - margin - text_w
-            max_y = img.height() - margin - text_h
+            # 自定义坐标使用无边距边界约束，避免文本水印在尺寸或位置超出图片时出现反向夹逼
+            min_x = 0
+            min_y = 0
+            max_x = img.width() - text_w
+            max_y = img.height() - text_h
             x = max(min_x, min(max_x, cx))
             y = max(min_y, min(max_y, cy))
+            print(f"[DEBUG][PreviewView] compose_qimage_for_path_duplicate[{path}]: TEXT custom -> draw at ({int(x)},{int(y)}) text_size=({text_w}x{text_h}) img_size=({img.width()}x{img.height()}) clamp=no_margin")
             painter.drawImage(int(x), int(y), text_img)
         else:
             content_rect = img.rect().adjusted(margin, margin, -margin, -margin)

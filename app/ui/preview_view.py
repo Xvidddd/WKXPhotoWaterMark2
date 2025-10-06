@@ -98,11 +98,41 @@ class PreviewView(QGraphicsView):
         self._max_zoom: float = 10.0
         self._base_transform: QTransform = QTransform()
         self._dragging_wm: bool = False
+        # 当前预览图片路径
+        self._current_path: str | None = None
+
+    def zoom_in(self) -> None:
+        self._user_zoom_active = True
+        self._zoom = min(self._max_zoom, self._zoom * self._zoom_step)
+        self._apply_transform()
+        print(f"[DEBUG][PreviewView] zoom_in -> zoom={self._zoom}")
+
+    def zoom_out(self) -> None:
+        self._user_zoom_active = True
+        self._zoom = max(self._min_zoom, self._zoom / self._zoom_step)
+        self._apply_transform()
+        print(f"[DEBUG][PreviewView] zoom_out -> zoom={self._zoom}")
+
+    def reset_zoom(self) -> None:
+        rect = self._scene.sceneRect()
+        if not rect.isNull():
+            self._user_zoom_active = False
+            self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+            self._base_transform = self.transform()
+            self._zoom = 1.0
+        print(f"[DEBUG][PreviewView] reset_zoom -> zoom={self._zoom}, user_active={self._user_zoom_active}")
+
+    def _apply_transform(self) -> None:
+        t = QTransform(self._base_transform)
+        t.scale(self._zoom, self._zoom)
+        self.setTransform(t)
+        print(f"[DEBUG][PreviewView] _apply_transform -> zoom={self._zoom}")
 
     def load_image(self, file_path: str) -> bool:
         pix = QPixmap(file_path)
         if pix.isNull():
             return False
+        print(f"[DEBUG][PreviewView] load_image -> path={file_path}, pix=({pix.width()}x{pix.height()})")
         self._scene.clear()
         # 清空场景后，之前的水印项会被删除，避免悬空引用
         self._wm_item = None
@@ -110,6 +140,8 @@ class PreviewView(QGraphicsView):
         self._image_item = QGraphicsPixmapItem(pix)
         self._scene.addItem(self._image_item)
         self._scene.setSceneRect(pix.rect())
+        # 记录当前图片路径，供导出当前使用
+        self._current_path = file_path
         # 加载图片后重置缩放为适配视图
         self.reset_zoom()
         # 加载图片后刷新水印显示
@@ -135,6 +167,7 @@ class PreviewView(QGraphicsView):
     def set_watermark_settings(self, settings: dict) -> None:
          # 读取旧设置
          prev = self._wm_settings or {}
+         print(f"[DEBUG][PreviewView] set_watermark_settings(prev_position={prev.get('position')}, new_position={settings.get('position')})")
          # 以旧设置为基础进行合并，避免未提供的键被丢弃
          merged = dict(prev)
          for k, v in settings.items():
@@ -145,6 +178,7 @@ class PreviewView(QGraphicsView):
              has_coords_in_new = any(k in settings for k in coord_keys)
              if ("position" in settings) and not has_coords_in_new:
                  merged["position"] = "custom"
+                 print(f"[DEBUG][PreviewView] preserve custom position because new settings have no coords")
          # 如果新设置未提供 position，则保留旧的 position
          if "position" not in settings and "position" in prev:
              merged["position"] = prev["position"]
@@ -156,6 +190,7 @@ class PreviewView(QGraphicsView):
                  for k in coord_keys:
                      if k in prev and k not in merged:
                          merged[k] = prev[k]
+                 print(f"[DEBUG][PreviewView] merge coords from prev -> pos=({merged.get('pos_x')},{merged.get('pos_y')}) pct=({merged.get('pos_x_pct')},{merged.get('pos_y_pct')})")
          # 应用合并后的设置
          self._wm_settings = merged
          self._apply_watermark()
@@ -267,24 +302,17 @@ class PreviewView(QGraphicsView):
             wm_rect = self._wm_item.boundingRect().toRect()
             current_is_custom = (self._wm_settings.get("position") == "custom")
             current_pos = self._wm_item.pos() if self._wm_item is not None else None
-
+            print(f"[DEBUG][PreviewView] TEXT apply: custom={current_is_custom}, just_created={just_created}, current_pos={current_pos}")
+        
             if current_is_custom:
-                # 自定义位置：优先保留已存在的位置；若为新创建或无现有位置，则根据坐标或百分比计算
-                if current_pos is not None and not just_created:
-                    self._wm_item.setPos(current_pos)
-                    # 更新设置中的位置信息
-                    self._wm_settings["position"] = "custom"
-                    self._wm_settings["pos_x"] = float(current_pos.x())
-                    self._wm_settings["pos_y"] = float(current_pos.y())
-                else:
-                    if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
-                        pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
-                        pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
-                        cx = img_rect.left() + pct_x * img_rect.width()
-                        cy = img_rect.top() + pct_y * img_rect.height()
-                    else:
-                        cx = float(self._wm_settings.get("pos_x", img_rect.left() + margin))
-                        cy = float(self._wm_settings.get("pos_y", img_rect.top() + margin))
+                # 自定义位置：优先使用显式提供的坐标（百分比或像素），其次才保留现有位置
+                img_rect = self._scene.sceneRect()
+                wm_rect = self._wm_item.boundingRect().toRect()
+                if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
+                    pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
+                    pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
+                    cx = img_rect.left() + pct_x * img_rect.width()
+                    cy = img_rect.top() + pct_y * img_rect.height()
                     # 边界约束
                     min_x = img_rect.left() + margin
                     min_y = img_rect.top() + margin
@@ -292,11 +320,45 @@ class PreviewView(QGraphicsView):
                     max_y = img_rect.bottom() - wm_rect.height() - margin
                     x = max(min_x, min(max_x, cx))
                     y = max(min_y, min(max_y, cy))
+                    print(f"[DEBUG] TEXT: from pct ({pct_x:.4f},{pct_y:.4f}) -> scene({cx:.2f},{cy:.2f}) clamped({x:.2f},{y:.2f}) margin={margin} img_rect={img_rect}")
+                    # 对自定义坐标不使用 margin 约束，避免在切换图片或调整面板后位置被挤压
+                    min_x = img_rect.left()
+                    min_y = img_rect.top()
+                    max_x = img_rect.right() - wm_rect.width()
+                    max_y = img_rect.bottom() - wm_rect.height()
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                    print(f"[DEBUG] TEXT: from pct ({pct_x:.4f},{pct_y:.4f}) -> scene({cx:.2f},{cy:.2f}) clamped_no_margin({x:.2f},{y:.2f}) img_rect={img_rect}")
                     self._wm_item.setPos(x, y)
-                    # 写回设置，确保后续面板更新不会丢失
-                    self._wm_settings["pos_x"] = float(x)
-                    self._wm_settings["pos_y"] = float(y)
-                    self._wm_settings["position"] = "custom"
+                elif "pos_x" in self._wm_settings and "pos_y" in self._wm_settings:
+                    cx = float(self._wm_settings.get("pos_x", img_rect.left() + margin))
+                    cy = float(self._wm_settings.get("pos_y", img_rect.top() + margin))
+                    min_x = img_rect.left() + margin
+                    min_y = img_rect.top() + margin
+                    max_x = img_rect.right() - wm_rect.width() - margin
+                    max_y = img_rect.bottom() - wm_rect.height() - margin
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                    print(f"[DEBUG] TEXT: from px ({cx:.2f},{cy:.2f}) -> clamped({x:.2f},{y:.2f})")
+                    # 对自定义坐标不使用 margin 约束
+                    min_x = img_rect.left()
+                    min_y = img_rect.top()
+                    max_x = img_rect.right() - wm_rect.width()
+                    max_y = img_rect.bottom() - wm_rect.height()
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                    print(f"[DEBUG] TEXT: from px ({cx:.2f},{cy:.2f}) -> clamped_no_margin({x:.2f},{y:.2f})")
+                    self._wm_item.setPos(x, y)
+                elif current_pos is not None and not just_created:
+                    print(f"[DEBUG] TEXT: preserve existing pos -> ({current_pos.x():.2f}, {current_pos.y():.2f})")
+                    self._wm_item.setPos(current_pos)
+                else:
+                    # 无坐标且新创建，使用默认偏移
+                    x = img_rect.left() + margin
+                    y = img_rect.top() + margin
+                    self._wm_item.setPos(x, y)
+                # 预览渲染不写回坐标，避免在切换图片时覆盖用户自定义的百分比坐标
+                # 保持 self._wm_settings 中的 pos_x/pos_y/pos_x_pct/pos_y_pct 不变，仅在拖拽结束时写回
             else:
                 # 枚举位置
                 x = img_rect.left() + margin
@@ -409,20 +471,59 @@ class PreviewView(QGraphicsView):
             # 恢复或计算位置
             current_is_custom = (self._wm_settings.get("position") == "custom")
             current_pos = self._wm_img_item.pos() if self._wm_img_item is not None else None
+            print(f"[DEBUG] IMG: current_is_custom={current_is_custom}, just_created={just_created}, current_pos={current_pos}")
             if current_is_custom:
                 if current_pos is not None and not just_created:
+                    print(f"[DEBUG] IMG: preserve existing pos -> ({current_pos.x():.2f}, {current_pos.y():.2f})")
                     self._wm_img_item.setPos(current_pos)
                 elif "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
                     img_rect = self._scene.sceneRect()
+                    wm_rect = self._wm_img_item.boundingRect().toRect()
                     pct_x = float(self._wm_settings.get("pos_x_pct", 0.0))
                     pct_y = float(self._wm_settings.get("pos_y_pct", 0.0))
-                    x = img_rect.left() + pct_x * img_rect.width()
-                    y = img_rect.top() + pct_y * img_rect.height()
+                    cx = img_rect.left() + pct_x * img_rect.width()
+                    cy = img_rect.top() + pct_y * img_rect.height()
+                    # 边界约束，保持与导出一致
+                    min_x = img_rect.left() + margin
+                    min_y = img_rect.top() + margin
+                    max_x = img_rect.right() - wm_rect.width() - margin
+                    max_y = img_rect.bottom() - wm_rect.height() - margin
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                    print(f"[DEBUG] IMG: from pct ({pct_x:.4f},{pct_y:.4f}) -> scene({cx:.2f},{cy:.2f}) clamped({x:.2f},{y:.2f}) margin={margin} img_rect={img_rect}")
+                    # 自定义坐标不使用 margin 约束
+                    min_x = img_rect.left()
+                    min_y = img_rect.top()
+                    max_x = img_rect.right() - wm_rect.width()
+                    max_y = img_rect.bottom() - wm_rect.height()
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                    print(f"[DEBUG] IMG: from pct ({pct_x:.4f},{pct_y:.4f}) -> scene({cx:.2f},{cy:.2f}) clamped_no_margin({x:.2f},{y:.2f}) img_rect={img_rect}")
                     self._wm_img_item.setPos(x, y)
                 elif "pos_x" in self._wm_settings and "pos_y" in self._wm_settings:
-                    x = float(self._wm_settings.get("pos_x", 0))
-                    y = float(self._wm_settings.get("pos_y", 0))
+                    img_rect = self._scene.sceneRect()
+                    wm_rect = self._wm_img_item.boundingRect().toRect()
+                    cx = float(self._wm_settings.get("pos_x", img_rect.left() + margin))
+                    cy = float(self._wm_settings.get("pos_y", img_rect.top() + margin))
+                    # 同样进行边界约束
+                    min_x = img_rect.left() + margin
+                    min_y = img_rect.top() + margin
+                    max_x = img_rect.right() - wm_rect.width() - margin
+                    max_y = img_rect.bottom() - wm_rect.height() - margin
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                    print(f"[DEBUG] IMG: from px ({cx:.2f},{cy:.2f}) -> clamped({x:.2f},{y:.2f})")
+                    # 自定义坐标不使用 margin 约束
+                    min_x = img_rect.left()
+                    min_y = img_rect.top()
+                    max_x = img_rect.right() - wm_rect.width()
+                    max_y = img_rect.bottom() - wm_rect.height()
+                    x = max(min_x, min(max_x, cx))
+                    y = max(min_y, min(max_y, cy))
+                    print(f"[DEBUG] IMG: from px ({cx:.2f},{cy:.2f}) -> clamped_no_margin({x:.2f},{y:.2f})")
                     self._wm_img_item.setPos(x, y)
+                # 预览渲染不写回坐标，避免在切换图片时覆盖用户自定义的百分比坐标
+                # 保持 self._wm_settings 中的 pos_x/pos_y/pos_x_pct/pos_y_pct 不变，仅在拖拽结束时写回
             else:
                 img_rect = self._scene.sceneRect()
                 wm_rect = self._wm_img_item.boundingRect().toRect()
@@ -504,82 +605,54 @@ class PreviewView(QGraphicsView):
             if rect.width() > 0 and rect.height() > 0:
                 self._wm_settings["pos_x_pct"] = float((pos.x() - rect.left()) / rect.width())
                 self._wm_settings["pos_y_pct"] = float((pos.y() - rect.top()) / rect.height())
+                print(f"[DEBUG][PreviewView] mouseReleaseEvent -> pos=({pos.x():.2f},{pos.y():.2f}) pct=({self._wm_settings['pos_x_pct']:.4f},{self._wm_settings['pos_y_pct']:.4f}) sceneRect={rect}")
+            else:
+                print(f"[DEBUG][PreviewView] mouseReleaseEvent -> pos=({pos.x():.2f},{pos.y():.2f}) no scene size")
         # 释放后恢复视图拖拽模式
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self._dragging_wm = False
         self._drag_item = None
 
-    # ===== 缩放相关API =====
-    def _apply_transform(self) -> None:
-        t = QTransform()
-        t.scale(self._zoom, self._zoom)
-        self.setTransform(self._base_transform * t)
-
-    def zoom_in(self) -> None:
-        if self._image_item is None:
-            return
-        self._zoom = min(self._zoom * self._zoom_step, self._max_zoom)
-        self._user_zoom_active = True
-        self._apply_transform()
-
-    def zoom_out(self) -> None:
-        if self._image_item is None:
-            return
-        self._zoom = max(self._zoom / self._zoom_step, self._min_zoom)
-        self._user_zoom_active = True
-        self._apply_transform()
-
-    def reset_zoom(self) -> None:
-        # 回到适配窗口显示，并更新基准变换
-        rect = self._scene.sceneRect()
-        if not rect.isNull():
-            self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
-            self._base_transform = self.transform()
-        self._zoom = 1.0
-        self._user_zoom_active = False
-        # 明确应用基准变换，确保视觉上回到“适配窗口”
-        self.setTransform(self._base_transform)
-
-    def wheelEvent(self, event):
-        # Ctrl + 滚轮进行缩放，其余交由默认行为
-        if event.modifiers() & Qt.ControlModifier:
-            if event.angleDelta().y() > 0:
-                self.zoom_in()
-            else:
-                self.zoom_out()
-            event.accept()
-        else:
-            super().wheelEvent(event)
-
-    # ===== 导出合成 =====
     def compose_qimage(self):
-        if self._image_item is None or not self._wm_settings:
-            return None
-        pix: QPixmap = self._image_item.pixmap()
-        if pix.isNull():
-            return None
-        img: QImage = pix.toImage().convertToFormat(QImage.Format_ARGB32)
+        """Compose current preview image with watermark based on the currently loaded file path.
+        Returns QImage or None if no current image is loaded.
+        """
+        # 使用当前已加载图片路径进行离屏合成
+        if hasattr(self, "_current_path") and self._current_path:
+            return self.compose_qimage_for_path(self._current_path, None)
+        return None
 
-        wm_type = self._wm_settings.get("wm_type", "text")
+    def compose_qimage_for_path(self, path: str, settings: dict | None = None):
+        # 离屏合成：直接从文件读取为 QImage 并绘制水印
+        if not path:
+            return None
+        img = QImage(path)
+        if img.isNull():
+            return None
+        img = img.convertToFormat(QImage.Format_ARGB32)
+
+        wm = settings or self._wm_settings or {}
+        wm_type = wm.get("wm_type", "text")
+        print(f"[DEBUG][PreviewView] compose_qimage_for_path -> path={path} wm_type={wm_type} position={wm.get('position')} pos=({wm.get('pos_x')},{wm.get('pos_y')}) pct=({wm.get('pos_x_pct')},{wm.get('pos_y_pct')}) margin={wm.get('margin')} img_size=({img.width()}x{img.height()})")
         if wm_type == "image":
-            # 图片水印合成
-            img_path = self._wm_settings.get("image_path", "")
+            # 图片水印导出
+            img_path = wm.get("image_path", "")
             if not img_path:
                 return img
             wm_img = QImage(img_path)
             if wm_img.isNull():
                 return img
-            opacity = float(self._wm_settings.get("img_opacity", 0.6))
-            margin = int(self._wm_settings.get("margin", 20))
-            scale_mode = self._wm_settings.get("img_scale_mode", "proportional")
+            opacity = float(wm.get("img_opacity", 0.6))
+            margin = int(wm.get("margin", 20))
+            scale_mode = wm.get("img_scale_mode", "proportional")
             if scale_mode == "proportional":
-                pct = int(self._wm_settings.get("img_scale_pct", 100))
+                pct = int(wm.get("img_scale_pct", 100))
                 target_w = max(1, int(wm_img.width() * pct / 100.0))
                 target_h = max(1, int(wm_img.height() * pct / 100.0))
                 wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             else:
-                target_w = max(1, int(self._wm_settings.get("img_width", wm_img.width())))
-                target_h = max(1, int(self._wm_settings.get("img_height", wm_img.height())))
+                target_w = max(1, int(wm.get("img_width", wm_img.width())))
+                target_h = max(1, int(wm.get("img_height", wm_img.height())))
                 wm_scaled = wm_img.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
             painter = QPainter(img)
@@ -587,20 +660,21 @@ class PreviewView(QGraphicsView):
             painter.setOpacity(opacity)
             wm_w = wm_scaled.width()
             wm_h = wm_scaled.height()
-            position = self._wm_settings.get("position", "bottom_right")
+            position = wm.get("position", "bottom_right")
             if position == "custom":
-                if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
-                    cx = float(self._wm_settings.get("pos_x_pct", 0.0)) * img.width()
-                    cy = float(self._wm_settings.get("pos_y_pct", 0.0)) * img.height()
+                if "pos_x_pct" in wm and "pos_y_pct" in wm:
+                    cx = float(wm.get("pos_x_pct", 0.0)) * img.width()
+                    cy = float(wm.get("pos_y_pct", 0.0)) * img.height()
                 else:
-                    cx = float(self._wm_settings.get("pos_x", margin))
-                    cy = float(self._wm_settings.get("pos_y", margin))
+                    cx = float(wm.get("pos_x", margin))
+                    cy = float(wm.get("pos_y", margin))
                 min_x = margin
                 min_y = margin
                 max_x = img.width() - margin - wm_w
                 max_y = img.height() - margin - wm_h
                 x = max(min_x, min(max_x, cx))
                 y = max(min_y, min(max_y, cy))
+                print(f"[DEBUG] compose_qimage_for_path[{path}]: IMG custom -> draw at ({int(x)},{int(y)}) wm_size=({wm_w}x{wm_h}) img_size=({img.width()}x{img.height()}) coords={{'pos_x':wm.get('pos_x'),'pos_y':wm.get('pos_y'),'pos_x_pct':wm.get('pos_x_pct'),'pos_y_pct':wm.get('pos_y_pct')}} margin={margin}")
                 painter.drawImage(int(x), int(y), wm_scaled)
             else:
                 content_rect = img.rect().adjusted(margin, margin, -margin, -margin)
@@ -635,33 +709,32 @@ class PreviewView(QGraphicsView):
             painter.end()
             return img
 
-        # 文本水印合成（保留原逻辑）
-        text = self._wm_settings.get("text", "")
+        text = wm.get("text", "")
         if not text:
             return img
-        font_size = int(self._wm_settings.get("font_size", 32))
-        opacity = float(self._wm_settings.get("opacity", 0.6))
-        margin = int(self._wm_settings.get("margin", 20))
-        position = self._wm_settings.get("position", "bottom_right")
-        color = self._wm_settings.get("color", QColor(0, 0, 0))
+        font_size = int(wm.get("font_size", 32))
+        opacity = float(wm.get("opacity", 0.6))
+        margin = int(wm.get("margin", 20))
+        position = wm.get("position", "bottom_right")
+        color = wm.get("color", QColor(0, 0, 0))
         if not isinstance(color, QColor):
             color = QColor(0, 0, 0)
 
-        shadow_enabled = bool(self._wm_settings.get("shadow_enabled", False))
-        shadow_offset = int(self._wm_settings.get("shadow_offset", 2))
-        shadow_blur = int(self._wm_settings.get("shadow_blur", 5))
-        shadow_color = self._wm_settings.get("shadow_color", QColor(0, 0, 0))
+        shadow_enabled = bool(wm.get("shadow_enabled", False))
+        shadow_offset = int(wm.get("shadow_offset", 2))
+        shadow_blur = int(wm.get("shadow_blur", 5))
+        shadow_color = wm.get("shadow_color", QColor(0, 0, 0))
         if not isinstance(shadow_color, QColor):
             shadow_color = QColor(0, 0, 0)
-        stroke_enabled = bool(self._wm_settings.get("stroke_enabled", False))
-        stroke_width = int(self._wm_settings.get("stroke_width", 2))
-        stroke_color = self._wm_settings.get("stroke_color", QColor(255, 255, 255))
+        stroke_enabled = bool(wm.get("stroke_enabled", False))
+        stroke_width = int(wm.get("stroke_width", 2))
+        stroke_color = wm.get("stroke_color", QColor(255, 255, 255))
         if not isinstance(stroke_color, QColor):
             stroke_color = QColor(255, 255, 255)
 
-        font_family = self._wm_settings.get("font_family", "")
-        font_bold = bool(self._wm_settings.get("font_bold", False))
-        font_italic = bool(self._wm_settings.get("font_italic", False))
+        font_family = wm.get("font_family", "")
+        font_bold = bool(wm.get("font_bold", False))
+        font_italic = bool(wm.get("font_italic", False))
         if font_family:
             font = QFont(font_family)
         else:
@@ -703,12 +776,12 @@ class PreviewView(QGraphicsView):
         text_w = text_img.width()
         text_h = text_img.height()
         if position == "custom":
-            if "pos_x_pct" in self._wm_settings and "pos_y_pct" in self._wm_settings:
-                cx = float(self._wm_settings.get("pos_x_pct", 0.0)) * img.width()
-                cy = float(self._wm_settings.get("pos_y_pct", 0.0)) * img.height()
+            if "pos_x_pct" in wm and "pos_y_pct" in wm:
+                cx = float(wm.get("pos_x_pct", 0.0)) * img.width()
+                cy = float(wm.get("pos_y_pct", 0.0)) * img.height()
             else:
-                cx = float(self._wm_settings.get("pos_x", margin))
-                cy = float(self._wm_settings.get("pos_y", margin))
+                cx = float(wm.get("pos_x", margin))
+                cy = float(wm.get("pos_y", margin))
             min_x = margin
             min_y = margin
             max_x = img.width() - margin - text_w
@@ -750,7 +823,7 @@ class PreviewView(QGraphicsView):
         return img
 
 
-    def compose_qimage_for_path(self, path: str, settings: dict | None = None):
+    def compose_qimage_for_path_duplicate(self, path: str, settings: dict | None = None):
         # 离屏合成：直接从文件读取为 QImage 并绘制水印
         if not path:
             return None
@@ -846,7 +919,6 @@ class PreviewView(QGraphicsView):
         if not isinstance(color, QColor):
             color = QColor(0, 0, 0)
 
-        # 读取阴影与描边配置
         shadow_enabled = bool(wm.get("shadow_enabled", False))
         shadow_offset = int(wm.get("shadow_offset", 2))
         shadow_blur = int(wm.get("shadow_blur", 5))
@@ -859,7 +931,6 @@ class PreviewView(QGraphicsView):
         if not isinstance(stroke_color, QColor):
             stroke_color = QColor(255, 255, 255)
 
-        # 构造字体（应用用户选择的字体族与样式）
         font_family = wm.get("font_family", "")
         font_bold = bool(wm.get("font_bold", False))
         font_italic = bool(wm.get("font_italic", False))
@@ -871,7 +942,6 @@ class PreviewView(QGraphicsView):
         font.setBold(font_bold)
         font.setItalic(font_italic)
 
-        # 用场景渲染文本（包含阴影与描边），生成透明文本图层
         text_scene = QGraphicsScene()
         if stroke_enabled:
             text_item = StrokedTextItem()

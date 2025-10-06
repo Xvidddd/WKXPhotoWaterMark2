@@ -127,6 +127,8 @@ class WatermarkPanel(QWidget):
 
         # 图片水印控件
         self.image_path_label = QLabel("未选择图片")
+        self.image_path_label.setWordWrap(False)
+        self.image_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.choose_image_btn = QPushButton("选择图片(PNG)")
         self.img_opacity = QSlider(Qt.Orientation.Horizontal)
         self.img_opacity.setRange(0, 100)
@@ -368,7 +370,9 @@ class WatermarkPanel(QWidget):
         image_path = settings.get("image_path")
         if isinstance(image_path, str):
             setattr(self, "_image_path", image_path)
-            self.image_path_label.setText(image_path if image_path else "未选择图片")
+            # 由设置应用到面板时，同步更新路径文本（省略显示）
+            # 原：self.image_path_label.setText(image_path if image_path else "未选择图片")
+            self._update_path_label(image_path)
         img_opacity = settings.get("img_opacity")
         if isinstance(img_opacity, (int, float)):
             self.img_opacity.setValue(int(max(0.0, min(1.0, float(img_opacity))) * 100))
@@ -425,16 +429,29 @@ class WatermarkPanel(QWidget):
             self._update_shadow_color_btn()
             self._emit()
             
-    def _choose_stroke_color(self) -> None:
-        color = QColorDialog.getColor(self._stroke_color, self, "选择描边颜色")
-        if color.isValid():
-            self._stroke_color = color
-            self._update_stroke_color_btn()
-            self._emit()
-
     def _choose_image(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(self, "选择水印图片", "", "PNG 图片 (*.png)")
         if file_path:
             setattr(self, "_image_path", file_path)
-            self.image_path_label.setText(file_path)
+            # 更新路径标签为省略显示，并设置完整路径为提示
+            self._update_path_label(file_path)
+            self._emit()
+
+    # 辅助方法：更新图片路径标签（过长时中间省略）
+    def _update_path_label(self, path: str | None):
+        full = path or "未选择图片"
+        # 使用当前字体的度量进行省略
+        metrics = self.image_path_label.fontMetrics()
+        # 目标宽度：标签当前宽度，若尚未布局则取一个合理的上限（配合Dock最大宽度）
+        target_width = self.image_path_label.width() if self.image_path_label.width() > 0 else 320
+        elided = metrics.elidedText(full, Qt.TextElideMode.ElideMiddle, int(target_width))
+        self.image_path_label.setText(elided)
+        self.image_path_label.setToolTip(full)
+
+    def _choose_stroke_color(self) -> None:
+        # 选择描边颜色并更新按钮与设置
+        color = QColorDialog.getColor(self._stroke_color, self, "选择描边颜色")
+        if color.isValid():
+            self._stroke_color = color
+            self._update_stroke_color_btn()
             self._emit()

@@ -173,12 +173,6 @@ class PreviewView(QGraphicsView):
          merged = dict(prev)
          for k, v in settings.items():
              merged[k] = v
-         # 如果旧设置为 custom，且新设置未携带坐标，仅为了更新其他字段，则保留 custom，避免位置被重置
-         if prev.get("position") == "custom":
-             coord_keys = ["pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]
-             has_coords_in_new = any(k in settings for k in coord_keys)
-             if ("position" in settings) and not has_coords_in_new:
-                 merged["position"] = "custom"
 
          # 如果新设置未提供 position，则保留旧的 position
          if "position" not in settings and "position" in prev:
@@ -191,6 +185,11 @@ class PreviewView(QGraphicsView):
                  for k in coord_keys:
                      if k in prev and k not in merged:
                          merged[k] = prev[k]
+         else:
+             # 当位置切换到非 custom（如九宫格），清理旧的坐标字段避免干扰预览渲染
+             for k in ["pos_x", "pos_y", "pos_x_pct", "pos_y_pct"]:
+                 if k in merged:
+                     merged.pop(k)
 
          # 应用合并后的设置
          self._wm_settings = merged

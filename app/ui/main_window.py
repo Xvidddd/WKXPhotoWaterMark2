@@ -248,19 +248,7 @@ class MainWindow(QMainWindow):
                 if "pos_x_pct" in saved_pos and "pos_y_pct" in saved_pos:
                     panel_settings["pos_x_pct"] = saved_pos.get("pos_x_pct")
                     panel_settings["pos_y_pct"] = saved_pos.get("pos_y_pct")
-            else:
-                # 若预览中存在用户拖拽生成的自定义位置，则在切换图片时保留（包含像素与百分比两种表示）
-                prev = getattr(self.preview, "_wm_settings", None)
-                if isinstance(prev, dict) and prev.get("position") == "custom":
-                    panel_settings["position"] = "custom"
-                    # 像素坐标（兼容）
-                    if "pos_x" in prev and "pos_y" in prev:
-                        panel_settings["pos_x"] = prev.get("pos_x")
-                        panel_settings["pos_y"] = prev.get("pos_y")
-                    # 百分比坐标（优先）
-                    if "pos_x_pct" in prev and "pos_y_pct" in prev:
-                        panel_settings["pos_x_pct"] = prev.get("pos_x_pct")
-                        panel_settings["pos_y_pct"] = prev.get("pos_y_pct")
+            # 注意：仅当该图片确有自定义坐标时才强制 position=custom，否则保留面板当前的 position 设置
             self.preview.set_watermark_settings(panel_settings)
 
     def _add_files_to_list(self, files: list[str]) -> None:

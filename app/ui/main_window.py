@@ -340,6 +340,35 @@ class MainWindow(QMainWindow):
         # 应用到面板与预览
         self.wm_panel.apply_settings(data)
         self.preview.set_watermark_settings(data)
+        
+        # 使模板对所有图片生效：根据模板位置处理每张图片的自定义坐标
+        if isinstance(data, dict):
+            pos = data.get("position")
+            if pos == "custom":
+                saved: dict = {}
+                if "pos_x_pct" in data and "pos_y_pct" in data:
+                    try:
+                        saved["pos_x_pct"] = float(data.get("pos_x_pct", 0.0))
+                        saved["pos_y_pct"] = float(data.get("pos_y_pct", 0.0))
+                    except Exception:
+                        pass
+                if "pos_x" in data and "pos_y" in data:
+                    try:
+                        saved["pos_x"] = int(data.get("pos_x", 0))
+                        saved["pos_y"] = int(data.get("pos_y", 0))
+                    except Exception:
+                        pass
+                # 将模板中的自定义坐标同步到所有图片
+                if saved:
+                    for i in range(self.list_widget.count()):
+                        item = self.list_widget.item(i)
+                        path = item.data(Qt.ItemDataRole.UserRole)
+                        if path:
+                            self._per_image_custom_pos[path] = dict(saved)
+            else:
+                # 非 custom 位置：清空所有图片的自定义坐标，确保九宫格等模板位置生效
+                self._per_image_custom_pos.clear()
+        
         QMessageBox.information(self, "已加载", f"模板已加载：\n{name}")
 
     def _on_rename_template(self) -> None:

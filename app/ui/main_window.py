@@ -176,6 +176,8 @@ class MainWindow(QMainWindow):
     def _setup_connections(self) -> None:
         self.list_widget.itemSelectionChanged.connect(self._on_list_selection_changed)
         self.wm_panel.settingsChanged.connect(self.preview.set_watermark_settings)
+        # 拖拽释放后坐标改变信号：同步到所有图片
+        self.preview.positionChanged.connect(self._on_preview_position_changed)
 
     def _on_open_images(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
@@ -213,11 +215,9 @@ class MainWindow(QMainWindow):
             return
         item = items[0]
         file_path = item.data(Qt.ItemDataRole.UserRole)
-        print(f"[DEBUG][MainWindow] selection_changed -> new_file={file_path}, prev_file={self._current_image_path}")
         # 首先保存之前图片的自定义位置（如果存在且为自定义）
         if self._current_image_path:
             prev = getattr(self.preview, "_wm_settings", None)
-            print(f"[DEBUG][MainWindow] save prev image custom? prev_settings.position={getattr(prev, 'get', lambda k, d=None: lambda:None)('position','')} prev_settings={prev}")
             if isinstance(prev, dict) and prev.get("position") == "custom":
                 saved = {}
                 # 像素坐标
@@ -230,17 +230,14 @@ class MainWindow(QMainWindow):
                     saved["pos_y_pct"] = prev.get("pos_y_pct")
                 if saved:
                     self._per_image_custom_pos[self._current_image_path] = saved
-                    print(f"[DEBUG][MainWindow] saved custom for '{self._current_image_path}': {saved}")
         # 更新当前路径
         self._current_image_path = file_path
-        print(f"[DEBUG][MainWindow] set current_image_path={self._current_image_path}")
         
         if not self.preview.load_image(file_path):
             QMessageBox.warning(self, "加载失败", "无法加载所选图片，请检查格式或文件是否损坏。")
         else:
             # 列表选择变化后，重新应用当前水印设置
             panel_settings = self.wm_panel.get_settings()
-            print(f"[DEBUG][MainWindow] panel_settings before merge: position={panel_settings.get('position')} margin={panel_settings.get('margin')} wm_type={panel_settings.get('wm_type')}")
             # 优先恢复该图片的自定义位置（若曾保存）
             saved_pos = self._per_image_custom_pos.get(file_path)
             if isinstance(saved_pos, dict):
@@ -251,7 +248,6 @@ class MainWindow(QMainWindow):
                 if "pos_x_pct" in saved_pos and "pos_y_pct" in saved_pos:
                     panel_settings["pos_x_pct"] = saved_pos.get("pos_x_pct")
                     panel_settings["pos_y_pct"] = saved_pos.get("pos_y_pct")
-                print(f"[DEBUG][MainWindow] restoring saved custom for '{file_path}': {saved_pos}")
             else:
                 # 若预览中存在用户拖拽生成的自定义位置，则在切换图片时保留（包含像素与百分比两种表示）
                 prev = getattr(self.preview, "_wm_settings", None)
@@ -265,8 +261,6 @@ class MainWindow(QMainWindow):
                     if "pos_x_pct" in prev and "pos_y_pct" in prev:
                         panel_settings["pos_x_pct"] = prev.get("pos_x_pct")
                         panel_settings["pos_y_pct"] = prev.get("pos_y_pct")
-                    print(f"[DEBUG][MainWindow] use current preview custom (no saved per-image) -> prev={prev}")
-            print(f"[DEBUG][MainWindow] apply to preview: position={panel_settings.get('position')} pos_x={panel_settings.get('pos_x')} pos_y={panel_settings.get('pos_y')} pos_x_pct={panel_settings.get('pos_x_pct')} pos_y_pct={panel_settings.get('pos_y_pct')} margin={panel_settings.get('margin')}")
             self.preview.set_watermark_settings(panel_settings)
 
     def _add_files_to_list(self, files: list[str]) -> None:
@@ -301,7 +295,6 @@ class MainWindow(QMainWindow):
             if "pos_x_pct" in prev and "pos_y_pct" in prev:
                 settings["pos_x_pct"] = prev.get("pos_x_pct")
                 settings["pos_y_pct"] = prev.get("pos_y_pct")
-        print(f"[DEBUG][MainWindow] collect_current_settings -> position={settings.get('position')} pos=({settings.get('pos_x')},{settings.get('pos_y')}) pct=({settings.get('pos_x_pct')},{settings.get('pos_y_pct')}) margin={settings.get('margin')} wm_type={settings.get('wm_type')} image_path={settings.get('image_path')}")
         return settings
 
 
@@ -464,7 +457,6 @@ class MainWindow(QMainWindow):
                 if "pos_x_pct" in prev and "pos_y_pct" in prev:
                     per_settings["pos_x_pct"] = prev.get("pos_x_pct")
                     per_settings["pos_y_pct"] = prev.get("pos_y_pct")
-                print(f"[DEBUG][ExportAll] use CURRENT preview coords for '{src_path_str}': pos=({per_settings.get('pos_x')},{per_settings.get('pos_y')}) pct=({per_settings.get('pos_x_pct')},{per_settings.get('pos_y_pct')}) margin={per_settings.get('margin')}")
             else:
                 # 否则，如果曾为该图片保存过自定义坐标，则合并之
                 saved_pos = self._per_image_custom_pos.get(src_path_str)
@@ -476,9 +468,6 @@ class MainWindow(QMainWindow):
                     if "pos_x_pct" in saved_pos and "pos_y_pct" in saved_pos:
                         per_settings["pos_x_pct"] = saved_pos.get("pos_x_pct")
                         per_settings["pos_y_pct"] = saved_pos.get("pos_y_pct")
-                    print(f"[DEBUG][ExportAll] use SAVED coords for '{src_path_str}': {saved_pos} margin={per_settings.get('margin')}")
-                else:
-                    print(f"[DEBUG][ExportAll] no custom coords for '{src_path_str}', use panel position={per_settings.get('position')} margin={per_settings.get('margin')}")
             img = self.preview.compose_qimage_for_path(src_path_str, per_settings)
             if img is None:
                 fail_items.append(src_path.name)
@@ -650,3 +639,37 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "导出成功", f"已保存到：\n{save_path}")
         else:
             QMessageBox.warning(self, "导出失败", "保存文件失败，请检查路径或权限。")
+
+    # 新增：预览拖拽位置改变后，同步所有图片坐标（百分比优先）
+    def _on_preview_position_changed(self, payload: dict) -> None:
+        if not isinstance(payload, dict):
+            return
+        saved: dict = {}
+        if "pos_x_pct" in payload and "pos_y_pct" in payload:
+            try:
+                saved["pos_x_pct"] = float(payload.get("pos_x_pct", 0.0))
+                saved["pos_y_pct"] = float(payload.get("pos_y_pct", 0.0))
+            except Exception:
+                pass
+        # 同步像素坐标（作为兼容项）
+        if "pos_x" in payload and "pos_y" in payload:
+            try:
+                saved["pos_x"] = int(payload.get("pos_x", 0))
+                saved["pos_y"] = int(payload.get("pos_y", 0))
+            except Exception:
+                pass
+        if not saved:
+            return
+        # 更新当前图片的坐标
+        if self._current_image_path:
+            self._per_image_custom_pos[self._current_image_path] = dict(saved)
+        # 将坐标同步到列表中所有图片，确保切换图片时保持一致
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            path = item.data(Qt.ItemDataRole.UserRole)
+            if path:
+                self._per_image_custom_pos[path] = dict(saved)
+        # 直接应用到预览（保持position=custom）
+        apply_settings = dict(saved)
+        apply_settings["position"] = "custom"
+        self.preview.set_watermark_settings(apply_settings)

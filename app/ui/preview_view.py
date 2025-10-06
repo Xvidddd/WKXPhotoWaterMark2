@@ -224,7 +224,6 @@ class PreviewView(QGraphicsView):
         color = self._wm_settings.get("color", QColor(0, 0, 0))
         if not isinstance(color, QColor):
             color = QColor(0, 0, 0)
-    
         # 读取阴影与描边配置
         shadow_enabled = bool(self._wm_settings.get("shadow_enabled", False))
         shadow_offset = int(self._wm_settings.get("shadow_offset", 2))
@@ -598,6 +597,9 @@ class PreviewView(QGraphicsView):
                 "pos_x_pct": self._wm_settings.get("pos_x_pct"),
                 "pos_y_pct": self._wm_settings.get("pos_y_pct"),
             })
+            # 控制台日志，便于核对坐标写回情况
+            print(f"[WM drag] pos_x={self._wm_settings.get('pos_x')}, pos_y={self._wm_settings.get('pos_y')}, "
+                  f"pos_x_pct={self._wm_settings.get('pos_x_pct')}, pos_y_pct={self._wm_settings.get('pos_y_pct')}")
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self._dragging_wm = False
         self._drag_item = None
@@ -655,10 +657,12 @@ class PreviewView(QGraphicsView):
                 else:
                     cx = float(wm.get("pos_x", margin))
                     cy = float(wm.get("pos_y", margin))
-                min_x = margin
-                min_y = margin
-                max_x = img.width() - margin - wm_w
-                max_y = img.height() - margin - wm_h
+            
+                # 与预览保持一致：自定义位置按图像边界夹紧（不使用 margin）
+                min_x = 0
+                min_y = 0
+                max_x = img.width() - wm_w
+                max_y = img.height() - wm_h
                 x = max(min_x, min(max_x, cx))
                 y = max(min_y, min(max_y, cy))
 
@@ -855,10 +859,11 @@ class PreviewView(QGraphicsView):
                 else:
                     cx = float(wm.get("pos_x", margin))
                     cy = float(wm.get("pos_y", margin))
-                min_x = margin
-                min_y = margin
-                max_x = img.width() - margin - wm_w
-                max_y = img.height() - margin - wm_h
+                # 与预览保持一致：自定义位置按图像边界夹紧（不使用 margin）
+                min_x = 0
+                min_y = 0
+                max_x = img.width() - wm_w
+                max_y = img.height() - wm_h
                 x = max(min_x, min(max_x, cx))
                 y = max(min_y, min(max_y, cy))
                 painter.drawImage(int(x), int(y), wm_scaled)
@@ -968,10 +973,11 @@ class PreviewView(QGraphicsView):
             else:
                 cx = float(wm.get("pos_x", margin))
                 cy = float(wm.get("pos_y", margin))
-            min_x = margin
-            min_y = margin
-            max_x = img.width() - margin - text_w
-            max_y = img.height() - margin - text_h
+            # 与预览保持一致：边界夹紧按图像边界而非margin
+            min_x = 0
+            min_y = 0
+            max_x = img.width() - text_w
+            max_y = img.height() - text_h
             x = max(min_x, min(max_x, cx))
             y = max(min_y, min(max_y, cy))
             painter.drawImage(int(x), int(y), text_img)

@@ -43,6 +43,9 @@ tmp/
 # App specific
 templates/
 
+# Scripts
+*.ps1
+
 # Tests: ignore assistant-created test scripts and temp images
 scripts/test_export_effects.py
 scripts/test_export_font.py

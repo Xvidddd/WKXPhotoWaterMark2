@@ -261,11 +261,8 @@ class PreviewView(QGraphicsView):
                     self._wm_img_item = None
                 return
             if self._wm_item is None:
-                if stroke_enabled:
-                    self._wm_item = StrokedTextItem()
-                    self._wm_item.set_stroke(stroke_width, stroke_color)
-                else:
-                    self._wm_item = QGraphicsTextItem()
+                # 始终使用带描边能力的文本项，禁用描边时设置宽度为0即可
+                self._wm_item = StrokedTextItem()
                 self._wm_item.setZValue(1001)
                 self._wm_item.setFlags(
                     QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -274,6 +271,23 @@ class PreviewView(QGraphicsView):
                 self._wm_item.setAcceptHoverEvents(True)
                 self._scene.addItem(self._wm_item)
                 just_created = True
+            else:
+                # 如果已有旧的普通文本项，且需要描边，转换为 StrokedTextItem
+                if not isinstance(self._wm_item, StrokedTextItem):
+                    old_item = self._wm_item
+                    new_item = StrokedTextItem()
+                    new_item.setZValue(1001)
+                    new_item.setFlags(
+                        QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                        | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                    )
+                    new_item.setAcceptHoverEvents(True)
+                    self._scene.addItem(new_item)
+                    # 保留旧项位置
+                    new_item.setPos(old_item.pos())
+                    # 用新项替换旧项
+                    self._scene.removeItem(old_item)
+                    self._wm_item = new_item
 
             self._wm_item.setPlainText(text)
             # 设置字体
@@ -288,6 +302,10 @@ class PreviewView(QGraphicsView):
             self._wm_item.setOpacity(opacity)
             if isinstance(color, QColor):
                 self._wm_item.setDefaultTextColor(color)
+
+            # 即时更新描边参数：关闭时将宽度设为0
+            if isinstance(self._wm_item, StrokedTextItem):
+                self._wm_item.set_stroke(stroke_width if stroke_enabled else 0, stroke_color)
 
             # 设置旋转变换，变换原点为中心
             rect = self._wm_item.boundingRect()

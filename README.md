@@ -1,52 +1,56 @@
 # WKX Photo Watermark
 
-本项目是一个基于 Python 的 Windows 本地图片加水印工具，使用 PySide6 构建桌面界面，Pillow 进行图像处理。
+一个基于 PySide6 的图片水印工具，支持文本水印与图片水印，提供描边、阴影、旋转、位置枚举与自定义定位等功能，预览与导出效果一致。
 
-## 环境准备
+## 主要功能
+- 文本水印：
+  - 即时预览，支持字体、大小、颜色、透明度
+  - 描边与阴影开关与参数即时生效（无需切换图片）
+  - 旋转角度居中应用，支持九宫格枚举位置与自定义位置
+- 图片水印：
+  - 即时缩放与旋转，位置枚举与自定义定位
+- 批量导出：在 <mcfile name="export_panel.py" path="app/ui/export_panel.py"></mcfile> 中配置导出选项
 
-建议使用 Conda 环境（已提供 `environment.yml` 与 `requirements.txt`）。
+## 环境要求
+- 建议使用 Conda 环境（已提供 <mcfile name="environment.yml" path="environment.yml"></mcfile>）
+- 必要依赖详见 <mcfile name="requirements.txt" path="requirements.txt"></mcfile>
 
-```bash
-conda create -n wkx-photo-watermark python=3.11 -y
-conda run -n wkx-photo-watermark pip install -r requirements.txt
-```
+## 安装与运行
+1. 创建并激活 Conda 环境（可直接用 environment.yml）
+   - conda env create -f environment.yml
+   - conda activate wkx-photo-watermark
+2. 在项目根目录运行应用：
+   - python -m app.main
+   - 入口文件：<mcfile name="main.py" path="app/main.py"></mcfile>
 
-或使用 `environment.yml`（可选）：
+## 打包为可执行文件（Windows）
+已提供打包脚本：<mcfile name="build_exe.ps1" path="scripts/build_exe.ps1"></mcfile>
+- 默认使用环境名 wkx-photo-watermark，可按需调整
+- 执行示例：
+  - powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1
+  - 指定环境名：powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1 -EnvName zxy_watermark
+- 输出位置：dist\WKXPhotoWaterMark.exe
 
-```bash
-conda env create -f environment.yml
-```
+## 发布 Release（GitHub）
+已提供发布脚本：<mcfile name="publish_release.ps1" path="scripts/publish_release.ps1"></mcfile>
+- 依赖环境变量 GITHUB_TOKEN（建议仅授予 repo 权限）
+- 示例：
+  - $env:GITHUB_TOKEN = "你的GitHub令牌"
+  - powershell -ExecutionPolicy Bypass -File .\scripts\publish_release.ps1 -RepoOwner Xvidddd -RepoName WKXPhotoWaterMark2 -TagName v1.0 -ReleaseName "WKX Photo Watermark v1.0" -Body "首个版本发布，包含单文件 exe。" -AssetPath .\releases\WKXPhotoWaterMark-v1.0-win64.zip
 
-## 运行
+## 项目结构
+- <mcfile name="main.py" path="app/main.py"></mcfile> 应用入口
+- <mcfile name="preview_view.py" path="app/ui/preview_view.py"></mcfile> 预览画布与水印绘制
+- <mcfile name="watermark_panel.py" path="app/ui/watermark_panel.py"></mcfile> 水印参数面板
+- <mcfile name="export_panel.py" path="app/ui/export_panel.py"></mcfile> 导出设置与操作
+- <mcfile name="build_exe.ps1" path="scripts/build_exe.ps1"></mcfile> 打包脚本
+- <mcfile name="publish_release.ps1" path="scripts/publish_release.ps1"></mcfile> 发布脚本
+- <mcfile name="requirements.txt" path="requirements.txt"></mcfile> 依赖列表
+- <mcfile name="environment.yml" path="environment.yml"></mcfile> Conda 环境描述
 
-激活环境后运行：
+## 常见问题
+- 首次启动 EXE 较慢：单文件模式需解压运行，属正常现象。
+- 体积较大：PySide6 依赖较多，已在脚本中使用 --collect-all 以确保可移植性。
+- 数据库驱动警告（OCI.dll/LIBPQ.dll）：与本工具无关，可忽略。
 
-```bash
-conda activate wkx-photo-watermark
-python app/main.py
-```
-
-首次启动将看到主窗口，支持从菜单“文件→导入图片”选择并预览单张图片。
-
-## 项目结构（当前）
-
-```
-app/
-  main.py              # 入口
-  ui/
-    main_window.py     # 主窗口（文件菜单、预览区域）
-    preview_view.py    # 预览视图（加载图片）
-docs/
-  spec.md              # 产品与技术规格
-requirements.txt
-environment.yml
-README.md
-```
-
-## 后续计划
-
-- 按 `docs/spec.md` 里程碑逐步实现：
-  - 图片列表与缩略图、拖拽导入
-  - 文本水印实时预览与参数面板
-  - 导出功能（格式、命名、JPEG质量）
-  - 模板管理与自动加载
+如需自定义图标、应用名或增加版本信息，请告诉我你的具体要求，我会更新打包与发布脚本。
